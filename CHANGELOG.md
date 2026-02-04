@@ -1,3 +1,10 @@
+## [1.28.5](https://github.com/CoCreate-app/CoCreate-text/compare/v1.28.4...v1.28.5) (2026-02-04)
+
+
+### Bug Fixes
+
+* update worklow ([977930e](https://github.com/CoCreate-app/CoCreate-text/commit/977930ef8889efa2a9b92f8d4f249624d6d862de))
+
 ## [1.28.4](https://github.com/CoCreate-app/CoCreate-text/compare/v1.28.3...v1.28.4) (2025-05-01)
 
 
