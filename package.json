@@ -46,12 +46,12 @@
     "webpack-log": "^3.0.1"
   },
   "dependencies": {
-    "@cocreate/actions": "^1.21.1",
-    "@cocreate/crdt": "^1.28.1",
-    "@cocreate/cursors": "^1.24.2",
-    "@cocreate/observer": "^1.18.1",
-    "@cocreate/selection": "^1.14.1",
-    "@cocreate/utils": "^1.39.0",
-    "@cocreate/uuid": "^1.12.1"
+    "@cocreate/actions": "^1.21.4",
+    "@cocreate/crdt": "^1.28.3",
+    "@cocreate/cursors": "^1.24.4",
+    "@cocreate/observer": "^1.19.0",
+    "@cocreate/selection": "^1.14.3",
+    "@cocreate/utils": "^1.42.2",
+    "@cocreate/uuid": "^1.12.4"
   }
 }
