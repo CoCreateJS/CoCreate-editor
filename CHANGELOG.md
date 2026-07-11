@@ -1,3 +1,12 @@
+## [1.28.6](https://github.com/CoCreate-app/CoCreate-text/compare/v1.28.5...v1.28.6) (2026-07-11)
+
+
+### Bug Fixes
+
+* bump package versions ([23e3467](https://github.com/CoCreate-app/CoCreate-text/commit/23e34674ec260e7f29b6805557b458cd7a7986b4))
+* removed post install and add add packages to apprved list ([8550334](https://github.com/CoCreate-app/CoCreate-text/commit/855033453b7519e7fb387b30888e5a5e4e875b48))
+* semantic version handling ([821cf11](https://github.com/CoCreate-app/CoCreate-text/commit/821cf1114272214e436a9ef377dff94ee2c6483a))
+
 ## [1.28.5](https://github.com/CoCreate-app/CoCreate-text/compare/v1.28.4...v1.28.5) (2026-02-04)
 
 
