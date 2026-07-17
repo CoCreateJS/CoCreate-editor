@@ -16,9 +16,9 @@
     "access": "public"
   },
   "scripts": {
-    "start": "npx webpack --config webpack.config.js",
-    "build": "npx webpack --mode=production --config webpack.config.js",
-    "dev": "npx webpack --config webpack.config.js --watch"
+    "start": "webpack --config webpack.config.js",
+    "build": "webpack --mode=production --config webpack.config.js",
+    "dev": "webpack --config webpack.config.js --watch"
   },
   "repository": {
     "type": "git",
@@ -36,16 +36,16 @@
   },
   "main": "./src/index.js",
   "dependencies": {
-    "@cocreate/actions": "^1.21.4",
-    "@cocreate/crdt": "^1.28.3",
-    "@cocreate/cursors": "^1.24.4",
-    "@cocreate/observer": "^1.19.0",
-    "@cocreate/selection": "^1.14.3",
-    "@cocreate/utils": "^1.42.2",
+    "@cocreate/actions": "^1.22.1",
+    "@cocreate/crdt": "^1.29.0",
+    "@cocreate/cursors": "^1.25.0",
+    "@cocreate/observer": "^1.20.0",
+    "@cocreate/selection": "^1.15.0",
+    "@cocreate/utils": "^1.44.0",
     "@cocreate/uuid": "^1.12.4"
   },
   "devDependencies": {
-    "@cocreate/webpack": "^1.4.3"
+    "@cocreate/webpack": "^1.6.0"
   },
   "allowScripts": {
     "@cocreate/actions@1.21.4": true,
