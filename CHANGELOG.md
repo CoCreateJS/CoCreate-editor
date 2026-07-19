@@ -1,3 +1,10 @@
+## [1.29.2](https://github.com/CoCreate-app/CoCreate-text/compare/v1.29.1...v1.29.2) (2026-07-19)
+
+
+### Bug Fixes
+
+* set default branch to main ([7802382](https://github.com/CoCreate-app/CoCreate-text/commit/7802382f006f211d7c722d31909c5c19c3c9bc2b))
+
 ## [1.29.1](https://github.com/CoCreate-app/CoCreate-text/compare/v1.29.0...v1.29.1) (2026-07-17)
 
 
