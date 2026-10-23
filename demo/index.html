@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CoCreate Markdown</title>
+    <link rel="stylesheet" href="../dist/CoCreate-markdown.min.css">
+</head>
+<body>
+    <h1>Markdown editors</h1>
+    <h2>Generic container</h2>
+    <div markdown markdown-block-edit="true" markdown-toolbar="true" aria-label="Post content" placeholder="Write a post"></div>
+    <h2>Textarea</h2>
+    <form>
+        <textarea markdown name="notes" aria-label="Notes"># Notes
+
+Write **Markdown** visually.</textarea>
+        <button type="reset">Reset notes</button>
+    </form>
+    <script src="../dist/CoCreate-markdown.min.js"></script>
+</body>
+</html>

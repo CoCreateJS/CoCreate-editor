@@ -1,93 +1,134 @@
-# CoCreate-markdown
+# CoCreate Markdown
 
+A browser plugin for declarative Markdown editing and HTML rendering. Based on
+CoCreate-copilot-client's client package layout and extracted from CoCreate-app's
+Milkdown adapter. Published package name: `@cocreate/markdown`.
 
+## Editors
 
-## Getting started
+Import the package once, or lazy-load it when `[markdown]` appears. Its observer
+initializes existing and added elements and attributes. Every element gets its
+own editor, with repeated initialization sharing that instance.
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
-
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
-
-```
-cd existing_repo
-git remote add origin https://gitlab.com/cocreatejs/CoCreate-markdown.git
-git branch -M main
-git push -uf origin main
+```html
+<div markdown key="content" aria-label="Post content"></div>
+<textarea markdown key="notes" aria-label="Notes"></textarea>
+<div markdown component key="content" aria-label="Message"></div>
 ```
 
-## Integrate with your tools
+Initialization installs the editor's `setValue()` first, then calls the element's
+existing `getValue()`, replaces the getters, and passes the captured source through
+the new setter. Synchronous reads complete this handoff in the same call stack,
+before loading Milkdown. The existing CoCreate value API determines where the initial source
+comes from, for every host type. Asynchronous initial reads are supported; newer
+writes take precedence while an initial read is pending. Existing child markup
+is replaced by the editor after its source has been read. Textareas preserve native values
+and native form submission, reset, and validation. `component` is handled only by
+Element Prototype before initialization: Markdown reads the initial value through
+the existing `getValue()` and then owns its value methods. Markdown does not
+inspect `component` or implement component storage behavior. Generic containers integrate
+with CoCreate through their value methods; they are not native form controls.
 
-* [Set up project integrations](https://gitlab.com/cocreatejs/CoCreate-markdown/-/settings/integrations)
+`element.getValue()` and `getValueAsync()` return Markdown. `element.setValue(text)`
+and `element.value = text` update the visual editor, including writes made while
+its dependencies load. `setValue(text, true)` also emits an `input` event.
+Typing emits bubbling `input`; blur emits `change`. Existing field keys and
+CRUD attributes stay on the original element. Value methods are restored by
+`destroy(element)`.
 
-## Collaborate with your team
+Standard `placeholder`, `aria-label`, `required`, `readonly`, and `disabled`
+attributes configure the editor. Set feature attributes before initialization. `true` enables a feature and `false`
+disables it; an empty attribute also enables it. Missing attributes preserve Crepe's
+defaults. Changing feature attributes on an existing editor does not rebuild it.
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+| Attribute | Default |
+| --- | --- |
+| `markdown-block-edit` | true |
+| `markdown-toolbar` | true |
+| `markdown-link-tooltip` | true |
+| `markdown-image-block` | true |
+| `markdown-table` | true |
+| `markdown-code-mirror` | true |
+| `markdown-latex` | true |
+| `markdown-list-item` | true |
+| `markdown-cursor` | true |
+| `markdown-placeholder` | true |
+| `markdown-top-bar` | false |
+| `markdown-ai` | false |
 
-## Test and Deploy
+The AI feature is its UI switch, not a configured AI connection. It still needs
+provider/handler configuration before use. Layout and scrolling belong to the
+surrounding component; the shared editor uses Crepe's frame theme.
+Editor readiness emits `markdown-ready`; initialization failures emit
+`markdown-error` with `detail.error`. Removing `markdown` destroys the editor.
+Call `destroy(element)` before permanently removing a host from the document.
 
-Use the built-in continuous integration in GitLab.
+## JavaScript
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+```js
+import markdown from '@cocreate/markdown';
 
-***
+await markdown.create(element);
+markdown.setValue(element, '**Hello**');
+const source = markdown.getValue(element);
+// The host application supplies its configured Markdown parser.
+markdown.setRenderer(markdownParser);
+const html = markdown.render(source);
+markdown.destroy(element);
+```
 
-# Editing this README
+`setRenderer(instance)` accepts a configured parser exposing `render(source)`.
+Rendering uses that same instance, preserving its table rules and syntax highlighting.
+The package does not bundle a second Markdown parser; configure the renderer before
+calling `render`. The host application controls parser options such as raw HTML.
+Milkdown supports CommonMark and GFM; align renderer extensions as needed.
+Source remains Markdown rather than serialized HTML.
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+CoCreate-app links this package and declares its lazy import in `CoCreate.config.js`.
+Its renderer plugin attaches markdown-it on `markdownLoaded`, or immediately if the
+module is already available. Editor styles and Crepe themes are imported by the
+package and load with its lazy CSS chunk. `[markdown]` initializes the marked
+element itself. There is no query-target initialization: use the host
+`getValue()` and `setValue()` methods from CRUD, Events, or application code.
 
-## Suggestions for a good README
+## Package status
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+CoCreate-app uses this package for its Markdown composer in place of its old
+app-local Milkdown adapter. No automatic CRDT
+binding is included. CoCreate-text's source operations and Milkdown transactions
+need a dedicated bridge; do not attach direct HTML morphing to Milkdown's DOM.
 
-## Name
-Choose a self-explaining name for your project.
+Build with `npm install` and `npm run build`. Bundled files are emitted in `dist`.
+The main bundle exposes `CoCreate.markdown`; include its CSS and generated chunks
+alongside it. The license follows the client package template (AGPL-3.0).
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+## Editor positions and CRDT source positions
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+The following methods await editor readiness and target one editor element:
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+- `insert(element, markdown, inline = false)` inserts at the current selection.
+- `insertPos(element, markdown, position, inline = false)` inserts at an editor position.
+- `replaceRange(element, markdown, { from, to })` replaces an editor range.
+- `getSelection(element)` returns the editor selection's positions and type.
+- `setSelection(element, anchor, head = anchor)` places a text caret or selection.
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+These positions are ProseMirror document positions. They are not DOM child indexes
+or offsets in the serialized Markdown string. The caret is local; Crepe's cursor
+feature does not by itself broadcast or render other people's cursors.
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+`src/CRDT.js` is the source-operation boundary for CoCreate CRDT:
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+- `sourceChange(before, after)` returns a contiguous `{ start, length, value }` splice.
+- `applySourceChange(source, change)` applies a splice to a Markdown string.
+- `applyChange(element, event.detail)` accepts a CoCreate CRDT source update after
+  editor initialization. It uses the canonical `string` when present, including
+  an empty string, or applies the source splice to the current Markdown.
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+`applyChange` updates through the editor API, without generating another input
+event. This first source-update API reparses the resulting Markdown document;
+it does not map source offsets to incremental ProseMirror transactions. Current
+whole-value updates recreate editor state, including its selection and undo
+history. This is an operation API foundation, not automatic CRDT synchronization:
+`crdt="true"` wiring, outgoing operation routing, initialization ownership, and
+remote cursor mapping remain to be implemented. The package does not import or
+initialize CoCreate-text or Milkdown's Yjs collaboration plugin.
