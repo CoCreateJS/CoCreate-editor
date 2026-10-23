@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>CoCreate Markdown</title>
-    <link rel="stylesheet" href="../dist/CoCreate-markdown.min.css">
+    <link rel="stylesheet" href="../dist/CoCreate-markdown.css">
 </head>
 <body>
     <h1>Markdown editors</h1>
@@ -17,6 +17,11 @@
 Write **Markdown** visually.</textarea>
         <button type="reset">Reset notes</button>
     </form>
-    <script src="../dist/CoCreate-markdown.min.js"></script>
+    <script>
+        document.addEventListener('markdown-error', event => {
+            console.error('Markdown initialization failed:', event.target, event.detail?.error);
+        });
+    </script>
+    <script src="../dist/CoCreate-markdown.js"></script>
 </body>
 </html>
