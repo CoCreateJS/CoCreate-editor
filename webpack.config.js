@@ -11,13 +11,13 @@ export default async (env, argv) => {
 	const isProduction = argv && argv.mode === "production";
 	const config = {
 		entry: {
-			"CoCreate-markdown": "./src/index.js"
+			"CoCreate-editor": "./src/index.js"
 		},
 		output: {
 			path: path.resolve(__dirname, "dist"),
 			filename: isProduction ? "[name].min.js" : "[name].js",
 			libraryExport: "default",
-			library: ["CoCreate", "markdown"],
+			library: ["CoCreate", "editor"],
 			clean: true
 		},
 		plugins: [

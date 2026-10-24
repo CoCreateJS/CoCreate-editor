@@ -1,27 +1,57 @@
 <!doctype html>
 <html lang="en">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>CoCreate Markdown</title>
-    <link rel="stylesheet" href="../dist/CoCreate-markdown.css">
-</head>
-<body>
-    <h1>Markdown editors</h1>
-    <h2>Generic container</h2>
-    <div markdown markdown-block-edit="true" markdown-toolbar="true" aria-label="Post content" placeholder="Write a post"></div>
-    <h2>Textarea</h2>
-    <form>
-        <textarea markdown name="notes" aria-label="Notes"># Notes
-
-Write **Markdown** visually.</textarea>
-        <button type="reset">Reset notes</button>
-    </form>
-    <script>
-        document.addEventListener('markdown-error', event => {
-            console.error('Markdown initialization failed:', event.target, event.detail?.error);
-        });
-    </script>
-    <script src="../dist/CoCreate-markdown.js"></script>
-</body>
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>CoCreate Editor: Text, Markdown and HTML</title>
+        <link rel="stylesheet" href="../dist/CoCreate-editor.css" />
+    </head>
+    <body>
+        <h1>CoCreate Editor</h1>
+        <h2>Plain text (default)</h2>
+        <div contenteditable="true">Type plain text here.</div>
+        <h2>Native text fields</h2>
+        <input editor="text" value="Native input" />
+        <textarea editor="text">Native textarea</textarea>
+        <h2>HTML document</h2>
+        <iframe
+            editor="html"
+            title="HTML document editor"
+            srcdoc="&lt;!doctype html&gt;&lt;html&gt;&lt;head&gt;&lt;title&gt;Editable page&lt;/title&gt;&lt;/head&gt;&lt;body&gt;&lt;h1&gt;Edit this document&lt;/h1&gt;&lt;p&gt;The iframe stores the full HTML source.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;"
+        ></iframe>
+        <h2>Markdown source</h2>
+        <div
+            id="markdown-example"
+            editor="markdown"
+            aria-label="Markdown message"
+            placeholder="Write Markdown"
+        ></div>
+        <h2>HTML source</h2>
+        <div
+            id="html-example"
+            editor="html"
+            aria-label="HTML message"
+            placeholder="Write HTML"
+        ></div>
+        <script>
+            document.addEventListener("editor-error", (event) =>
+                console.error(
+                    "Editor initialization failed:",
+                    event.target,
+                    event.detail?.error
+                )
+            );
+        </script>
+        <script src="../dist/CoCreate-editor.js"></script>
+        <script>
+            document
+                .querySelector("#markdown-example")
+                .setValue("# Markdown\n\nWrite **Markdown** visually.");
+            document
+                .querySelector("#html-example")
+                .setValue(
+                    "<h2>HTML</h2><p>Write <strong>HTML</strong> visually. &amp; keeps its exact source.</p>"
+                );
+        </script>
+    </body>
 </html>

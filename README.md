@@ -1,134 +1,260 @@
-# CoCreate Markdown
+# CoCreate Editor
 
-A browser plugin for declarative Markdown editing and HTML rendering. Based on
-CoCreate-copilot-client's client package layout and extracted from CoCreate-app's
-Milkdown adapter. Published package name: `@cocreate/markdown`.
+One canonical source string, native text fields, and contenteditable rendering for
+plain text, Markdown, or HTML. Markdown and HTML remain separate source formats.
 
-## Editors
-
-Import the package once, or lazy-load it when `[markdown]` appears. Its observer
-initializes existing and added elements and attributes. Every element gets its
-own editor, with repeated initialization sharing that instance.
+## Initialize
 
 ```html
-<div markdown key="content" aria-label="Post content"></div>
-<textarea markdown key="notes" aria-label="Notes"></textarea>
-<div markdown component key="content" aria-label="Message"></div>
+<div contenteditable="true">Plain text by default</div>
+<div editor="markdown" placeholder="Write Markdown"></div>
+<div editor="html" placeholder="Write HTML"></div>
+<input editor="text" value="Optional native adapter" />
+<textarea editor="text">Native multiline text</textarea>
 ```
 
-Initialization installs the editor's `setValue()` first, then calls the element's
-existing `getValue()`, replaces the getters, and passes the captured source through
-the new setter. Synchronous reads complete this handoff in the same call stack,
-before loading Milkdown. The existing CoCreate value API determines where the initial source
-comes from, for every host type. Asynchronous initial reads are supported; newer
-writes take precedence while an initial read is pending. Existing child markup
-is replaced by the editor after its source has been read. Textareas preserve native values
-and native form submission, reset, and validation. `component` is handled only by
-Element Prototype before initialization: Markdown reads the initial value through
-the existing `getValue()` and then owns its value methods. Markdown does not
-inspect `component` or implement component storage behavior. Generic containers integrate
-with CoCreate through their value methods; they are not native form controls.
+Contenteditable elements initialize automatically without CRDT. `editor="text"`
+is the default; `markdown` and `html` select their renderer. Explicit `editor`
+attributes activate editable surfaces without generating nested containers.
+Native inputs and textareas stay ordinary browser controls unless explicitly
+marked `editor="text"` or `crdt="true"`. Supported input types are text, search,
+tel, url, email, and password. Native fields always edit literal text. Unsupported
+controls such as number, checkbox, and file inputs are left alone.
 
-`element.getValue()` and `getValueAsync()` return Markdown. `element.setValue(text)`
-and `element.value = text` update the visual editor, including writes made while
-its dependencies load. `setValue(text, true)` also emits an `input` event.
-Typing emits bubbling `input`; blur emits `change`. Existing field keys and
-CRUD attributes stay on the original element. Value methods are restored by
-`destroy(element)`.
+Use `CoCreate.editor` and `editor="text|markdown|html"`. `editor-placeholder="false"`
+disables the surface placeholder. Build outputs are `CoCreate-editor.js/.css` and
+`CoCreate-editor.min.js/.css`; the package is `@cocreate/editor`. The component lives
+in `CoCreate-modules/CoCreate-editor`. The GitLab repository is
+[CoCreate Editor](https://gitlab.com/cocreatejs/CoCreate-editor).
 
-Standard `placeholder`, `aria-label`, `required`, `readonly`, and `disabled`
-attributes configure the editor. Set feature attributes before initialization. `true` enables a feature and `false`
-disables it; an empty attribute also enables it. Missing attributes preserve Crepe's
-defaults. Changing feature attributes on an existing editor does not rebuild it.
+Initialization reads existing component storage or a custom `getValue()`.
+Plain-text DOM hosts start from `textContent`, without serializing HTML entities.
+Newer writes win over asynchronous initial reads. `getValue()`, `getValueAsync()`,
+and `.value` expose canonical text. `setValue(source)` updates it; its optional
+second argument `true` emits `input`. Native `.value` retains normal browser
+behavior: use `setValue()` or dispatch `input` to synchronize programmatic changes.
+Native form reset also updates the binding.
 
-| Attribute | Default |
-| --- | --- |
-| `markdown-block-edit` | true |
-| `markdown-toolbar` | true |
-| `markdown-link-tooltip` | true |
-| `markdown-image-block` | true |
-| `markdown-table` | true |
-| `markdown-code-mirror` | true |
-| `markdown-latex` | true |
-| `markdown-list-item` | true |
-| `markdown-cursor` | true |
-| `markdown-placeholder` | true |
-| `markdown-top-bar` | false |
-| `markdown-ai` | false |
+Dynamic hosts and changes to `editor` or binding attributes are observed. Changing
+format reinterprets the source without converting it. `readonly`/`disabled` disable
+editable surfaces at initialization. `editor-placeholder="false"` disables their
+placeholder. Surrounding application components own toolbars.
 
-The AI feature is its UI switch, not a configured AI connection. It still needs
-provider/handler configuration before use. Layout and scrolling belong to the
-surrounding component; the shared editor uses Crepe's frame theme.
-Editor readiness emits `markdown-ready`; initialization failures emit
-`markdown-error` with `detail.error`. Removing `markdown` destroys the editor.
-Call `destroy(element)` before permanently removing a host from the document.
+## Optional CRDT
 
-## JavaScript
+```html
+<div editor="markdown" crdt="true" array="messages" object="message-id" key="body"></div>
+<textarea crdt="true" array="messages" object="message-id" key="body"></textarea>
+```
+
+These two elements share the same serialized source, with different projections.
+Only explicit `crdt="true"` plus valid `array`, `object`, and `key` values activates
+collaboration. Local editing works without a CRDT engine. Pending object IDs wait
+for their real ID. Changing identity detaches the old binding; disabling CRDT leaves
+local editing active.
+
+The `@cocreate/crdt` dependency is loaded only when needed, or an existing
+`CoCreate.crdt` engine is reused. Applications may provide it with
+`editor.setCrdt(engine)`. The engine owns convergence, persistence, shared selection
+references, and collaborative undo/redo. The adapter sends UTF-16 source splices,
+rebases queued local edits over incoming source updates, and updates other bound
+fields without rebroadcasting remote edits. Initial loading also retains local edits.
+`read`, `save`, `crud`, `namespace`, and `room` are passed through to the engine.
+CRDT errors emit `editor-error`; failed pending writes are retained in memory and
+require resolving the engine/connection error and rebinding before sending again.
+
+CoCreate Text yields listeners and DOM updates to claimed editor fields, avoiding
+duplicate handling. Iframe editor hosts use the inner document surface rather than attaching duplicate
+CoCreate Text handlers. Surface selection uses its owning document/window. Remote cursor UI remains
+an application/cursors-component concern; the editor publishes source selections.
+
+Call `destroy(element)` before permanently removing a host to release listeners
+and collaboration bindings. It restores the previous value API and host attributes.
+
+## Iframe documents
+
+```html
+<iframe editor="html" title="Page editor"></iframe>
+```
 
 ```js
-import markdown from '@cocreate/markdown';
-
-await markdown.create(element);
-markdown.setValue(element, '**Hello**');
-const source = markdown.getValue(element);
-// The host application supplies its configured Markdown parser.
-markdown.setRenderer(markdownParser);
-const html = markdown.render(source);
-markdown.destroy(element);
+const editorInstance = await editor.create(frame);
+frame.setValue('<!doctype html><html><head><title>Page</title></head><body><p>Edit here</p></body></html>');
+const source = frame.getValue();
+const doc = editorInstance.document; // frame.contentDocument
+const surface = editorInstance.host; // doc.documentElement (<html>)
 ```
 
-`setRenderer(instance)` accepts a configured parser exposing `render(source)`.
-Rendering uses that same instance, preserving its table rules and syntax highlighting.
-The package does not bundle a second Markdown parser; configure the renderer before
-calling `render`. The host application controls parser options such as raw HTML.
-Milkdown supports CommonMark and GFM; align renderer extensions as needed.
-Source remains Markdown rather than serialized HTML.
+The iframe is the public reference. Its Document owns the live `<html>`, `<head>`,
+and `<body>` structure; only the `<html>` element receives `contenteditable`.
+Same-origin access is required. `iframe[contenteditable]` and `iframe[crdt="true"]`
+also initialize; iframe source mode is HTML. Native inputs and textareas inside the
+page keep their native behavior. No editable wrapper is generated inside the frame.
 
-CoCreate-app links this package and declares its lazy import in `CoCreate.config.js`.
-Its renderer plugin attaches markdown-it on `markdownLoaded`, or immediately if the
-module is already available. Editor styles and Crepe themes are imported by the
-package and load with its lazy CSS chunk. `[markdown]` initializes the marked
-element itself. There is no query-target initialization: use the host
-`getValue()` and `setValue()` methods from CRUD, Events, or application code.
+Source initializes from component/custom value storage, exact `srcdoc` text, or the
+current document if neither is supplied. Subsequent editing retains the canonical
+string, including doctype spelling, tag spelling, and attributes, without repeatedly
+serializing the live DOM. Detached rendering creates a staging Document. Healing
+patches the live document while retaining its `<html>` reference and matching
+subtrees. Body text edits preserve head content and doctype; head/style content is
+excluded from the editable text projection. Source selections include the complete
+HTML prefix rather than starting at the body.
 
-## Package status
+Iframe `getValue`, `setValue`, source operations, local history, and optional CRDT
+use the same public APIs. Each native inner input edit is published on the iframe
+reference. A frame load reconnects listeners and renders the current source into
+the new accessible Document; `editorInstance.document` and `.host` follow it.
+`editor-document-change` reports the new document and surface. Destroy detaches
+editing and restores the previous editing attributes while retaining the document.
 
-CoCreate-app uses this package for its Markdown composer in place of its old
-app-local Milkdown adapter. No automatic CRDT
-binding is included. CoCreate-text's source operations and Milkdown transactions
-need a dedicated bridge; do not attach direct HTML morphing to Milkdown's DOM.
+Nested surfaces remain a simple ownership boundary. Parent input, paste,
+composition, and undo handling ignore native controls and explicit nested
+`contenteditable`/`editor` surfaces, including elements with their own
+`array`/`object`/`key`. The parent also checks the selection because browsers may
+target input at the outer body. Nested surfaces are atomic in the parent's text
+projection. Healing preserves their live contents and handlers when their structural
+identity remains the same. Their source template stays in the parent source string;
+live field values belong to the nested component. This renderer does not initialize
+nested components on the parent's behalf.
 
-Build with `npm install` and `npm run build`. Bundled files are emitted in `dist`.
-The main bundle exposes `CoCreate.markdown`; include its CSS and generated chunks
-alongside it. The license follows the client package template (AGPL-3.0).
+Staging Documents are detached and have no live window. Their nodes are not passed
+to component initialization observers. Each staging render derives from canonical
+source, so runtime field changes do not alter the skeleton. The current skeleton is
+retained on the editor; new live nodes are cloned with their source maps rather
+than moved out of it. More precise insertion
+and text patch strategies can evolve independently of these ownership rules.
 
-## Editor positions and CRDT source positions
+HTML void element names are centralized in `src/config.js` as `voidElements`:
+area, base, br, col, embed, hr, img, input, link, meta, param, source, track, and wbr.
+They receive source ranges and an atomic projection marker, never consume a closing
+tag, and accept both `<br>` and `<br />` without rewriting the source. Full-document
+mode also supports structural, layout, head, form, and table tags. The existing
+balanced-tag parser remains in use; this is not full HTML5 error recovery or a test
+of every website-builder interaction. Code/pre contents remain literal. Generated
+script projections are inert; event-handler attributes are omitted from the live
+projection while their original source text is retained.
 
-The following methods await editor readiness and target one editor element:
+## Editing and healing
 
-- `insert(element, markdown, inline = false)` inserts at the current selection.
-- `insertPos(element, markdown, position, inline = false)` inserts at an editor position.
-- `replaceRange(element, markdown, { from, to })` replaces an editor range.
-- `getSelection(element)` returns the editor selection's positions and type.
-- `setSelection(element, anchor, head = anchor)` places a text caret or selection.
+Native `input` drives editing without intercepting `beforeinput`. A projection
+maps visible characters to source ranges. This includes HTML entities: one visible
+`&` can address the entire `&amp;` source range. Source edits render into a detached
+element, then reconciliation patches the live div while preserving matching nodes.
+`heal(element)` explicitly repairs live DOM from canonical text. A completed edit
+bubbles one input event from the original host. Blur emits `change`; initialization
+emits `editor-ready` or `editor-error`.
 
-These positions are ProseMirror document positions. They are not DOM child indexes
-or offsets in the serialized Markdown string. The caret is local; Crepe's cursor
-feature does not by itself broadcast or render other people's cursors.
+Composition remains in live DOM until `compositionend`. Programmatic source writes
+or type changes during composition take effect when it finishes. Ctrl/Cmd+Z,
+Shift+Ctrl/Cmd+Z, and Ctrl/Cmd+Y use collaborative history when bound, otherwise a 100-entry local source history, one
+entry per input event. Programmatic source writes clear local undo history. Paste
+uses plain text as source: Markdown in Markdown mode, HTML in HTML mode.
 
-`src/CRDT.js` is the source-operation boundary for CoCreate CRDT:
+Enter is normalized to a literal `\n` in both source formats, including while a
+syntax match or quoted HTML attribute is unfinished. It never saves browser-created
+paragraph wrappers or placeholder breaks. In Markdown mode a single newline is a
+visible soft line break in the editor; a blank line separates paragraphs. In HTML
+mode newlines remain text, and explicitly typed `<br>` is a separate source token
+that renders a break. Any break nodes needed for caret placement are projection
+artifacts only. A future toolbar can insert the chosen source syntax explicitly.
 
-- `sourceChange(before, after)` returns a contiguous `{ start, length, value }` splice.
-- `applySourceChange(source, change)` applies a splice to a Markdown string.
-- `applyChange(element, event.detail)` accepts a CoCreate CRDT source update after
-  editor initialization. It uses the canonical `string` when present, including
-  an empty string, or applies the source splice to the current Markdown.
+## Shared syntax configuration
 
-`applyChange` updates through the editor API, without generating another input
-event. This first source-update API reparses the resulting Markdown document;
-it does not map source offsets to incremental ProseMirror transactions. Current
-whole-value updates recreate editor state, including its selection and undo
-history. This is an operation API foundation, not automatic CRDT synchronization:
-`crdt="true"` wiring, outgoing operation routing, initialization ownership, and
-remote cursor mapping remain to be implemented. The package does not import or
-initialize CoCreate-text or Milkdown's Yjs collaboration plugin.
+`src/config.js` is the shared definition list. Each definition declares a rendered
+`tag` (or trusted `create(match)` callback), plus optional `markdown` and `html`
+sections. An absent section means that definition does not match in that language.
+
+```js
+const remove = editor.addSyntax({
+    name: 'highlight',
+    tag: 'mark',
+    markdown: {
+        scope: 'inline',
+        pattern: /%%(.+?)%%/g,
+        content: match => match[1],
+        offset: () => 2
+    },
+    html: { tags: ['highlight'] }
+});
+// Markdown source: %%hello%%
+// HTML source: <highlight>hello</highlight>
+// Both project to <mark>hello</mark> in their respective modes.
+```
+
+Markdown sections define a regex, content(match), and offset(match) for a contiguous
+source substring. `scope: 'block'` supports custom single-line blocks. Built-in block
+kinds supply structural consumption for headings, lists, quotes, and fences.
+HTML sections list accepted source tag names in `tags`. HTML parsing handles nested
+paired tags, quoted attributes, entities, and configured void elements. Complete
+allowed tags render; unsupported or unfinished markup stays visible as text.
+
+`addSyntax()` inserts a custom definition ahead of ordinary defaults and returns a
+removal function. `updateSyntax(name, definition)` replaces a definition's language
+sections and output. Updating or removing definitions automatically refreshes active
+editors from source, preserving selection. The earlier flat Markdown-only
+`addSyntax({pattern, content, offset, tag, name})` shape still works. Treat the
+exported `syntaxRules` list as read-only; use these APIs to notify active editors.
+
+Code boundaries are protected independently of configurable rule precedence.
+Markdown code spans (including unfinished spans) and fenced code blocks exclude
+other matches. HTML `<code>` and `<pre>` contents are literal, including unfinished
+regions. Entities in HTML code decode for display but retain their original source
+ranges. Nested HTML tags inside code/pre are displayed as text. Custom definitions
+cannot replace the reserved code/fence rules or claim their HTML tag names.
+
+HTML attributes default to class/title; links also accept href. A definition's
+`html.attributes` can opt into additional supported attributes. The shared attribute
+policy accepts class, title, role, rel, ARIA/data attributes, and safe link hrefs;
+event handlers, styles, and internal mapping attributes are excluded. Links allow
+HTTP, HTTPS, and mailto. Trusted create callbacks should return the wrapper for
+mapped content; use delegated events because reconciliation preserves live nodes.
+
+## JavaScript and source operations
+
+```js
+import editor from '@cocreate/editor';
+await editor.create(element);
+element.setValue('**Hello**');
+const source = element.getValue();
+const markdownHTML = editor.render('**Hello**', 'markdown');
+const htmlProjection = editor.render('<strong>Hello</strong>', 'html');
+editor.heal(element);
+```
+
+`setRenderer(parser)` optionally supplies a separate `render(source)` implementation
+for the public Markdown-to-HTML function only; editable surfaces use mapped language
+renderers. HTML-mode public rendering always uses the configured HTML projection.
+
+All positions are UTF-16 offsets in canonical source, not DOM or ProseMirror indexes:
+
+- `getSelection(element)` returns `{anchor, head, from, to, empty, type}`.
+- `setSelection(element, anchor, head = anchor)` places a source selection.
+- `insert(element, source)` replaces the selection.
+- `insertPos(element, source, position)` inserts at a source offset.
+- `replaceRange(element, source, {from, to})` replaces a source range.
+
+Positions inside hidden syntax or entities normalize to adjacent visible positions.
+`create()` resolves to `{element, host}`; ordinary surfaces use `host === element`, while iframes use their document element. Rendered surfaces also expose `staging()`; native fields do not create staging DOM.
+
+`sourceChange(before, after)` computes `{start, length, value}`. `applySourceChange`
+applies a source splice. `applyChange(element, change)` accepts a canonical
+`change.string` or a splice and updates silently. The optional CRDT binding uses these source coordinates for broadcasting and remote updates.
+
+## Current scope
+
+Markdown supports paragraphs, headings, flat lists, blockquotes, fenced code,
+horizontal rules, links, inline code, strong text, emphasis, and custom rules.
+Nested lists, tables, images, reference links, complex emphasis, and full
+CommonMark/GFM conformance remain future work. HTML supports the configured small
+element set rather than a complete browser HTML parser; malformed markup stays
+literal where unmatched. Neither language changes the other's source syntax.
+
+`demo/index.html` demonstrates plain text, Markdown, HTML, native text fields, and
+iframe document editing.
+
+## Build and tests
+
+`npm install`, then `npm start` produces development files for the demo.
+`npm run build` produces minified JS/CSS. Browser tests run with `npm test` after
+`npx playwright-core install chromium`. `CHROMIUM_PATH` can select an existing
+browser; `PLAYWRIGHT_MODULE` can select an external Playwright installation.

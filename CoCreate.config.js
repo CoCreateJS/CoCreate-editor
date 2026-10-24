@@ -7,11 +7,11 @@ module.exports = {
 			array: "files",
 			object: {
 				name: "index.html",
-				path: "/docs/markdown",
-				pathname: "/docs/markdown/index.html",
+				path: "/docs/editor",
+				pathname: "/docs/editor/index.html",
 				src: "{{./docs/index.html}}",
 				host: ["*"],
-				directory: "markdown",
+				directory: "editor",
 				"content-type": "{{content-type}}",
 				public: "true"
 			}

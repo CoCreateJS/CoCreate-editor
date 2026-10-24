@@ -1,6 +1,6 @@
-# Contributing to CoCreate Markdown
+# Contributing to CoCreate Editor
 
-Contributions are welcome. Please open issues and merge requests in the [CoCreate Markdown repository](https://gitlab.com/cocreatejs/CoCreate-markdown).
+Contributions are welcome. Please open issues and merge requests in the [CoCreate Editor repository](https://gitlab.com/cocreatejs/CoCreate-editor).
 
 ## Development
 
@@ -17,9 +17,9 @@ Install dependencies with `npm install`. Build the package with `npm run build`.
 This project uses semantic release. Commit messages determine whether a change is a patch, feature, or breaking release. Examples:
 
 ```text
-fix: preserve markdown selection when inserting text
-feat: add markdown toolbar command
+fix: preserve editor selection when inserting text
+feat: add editor toolbar command
 feat!: replace the editor initialization API
 ```
 
-Thank you for helping improve CoCreate Markdown.
+Thank you for helping improve CoCreate Editor.
