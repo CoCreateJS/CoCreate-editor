@@ -1,33 +1,33 @@
 import { setSourceRange } from "./utilities/ranges.js";
 import { reconcileMirror } from "./utilities/mirror.js";
+import htmlTokens from "./language/html.js";
+import javascript from "./language/javascript.js";
 
-// Ordered rules: a complete comment or string owns its contents before
-// keywords and numbers can match there. Additional languages can supply rules.
-export const codeRules = {
-    javascript: [
-        {
-            name: "comment",
-            pattern: /\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)/y,
-            content: raw => [2, raw.startsWith("/*") && raw.endsWith("*/")
-                ? raw.length - 2 : raw.length]
-        },
-        {
-            name: "string",
-            pattern: /"(?:\\.|[^"\\\n])*(?:"|(?=\n|$))|'(?:\\.|[^'\\\n])*(?:'|(?=\n|$))|`(?:\\.|[^`\\])*(?:`|$)/y,
-            content: raw => {
-                let slashes = 0;
-                for (let i = raw.length - 2; i >= 0 && raw[i] === "\\"; i--)
-                    slashes++;
-                const closed = raw.length > 1 && raw.at(-1) === raw[0] &&
-                    slashes % 2 === 0;
-                return [1, raw.length - (closed ? 1 : 0)];
-            }
-        },
-        { name: "keyword", pattern: /\b(?:async|await|break|case|catch|class|const|continue|debugger|default|delete|do|else|export|extends|finally|for|from|function|if|import|in|instanceof|let|new|of|return|static|super|switch|this|throw|try|typeof|var|void|while|yield)\b/y },
-        { name: "number", pattern: /\b\d+(?:\.\d+)?\b/y }
-    ]
-};
-codeRules.js = codeRules.javascript;
+export const codeRules = { javascript, js: javascript };
+
+function* ruleTokens(source, definitions) {
+    const rules = definitions.map(rule => ({
+        ...rule,
+        pattern: new RegExp(rule.pattern.source, rule.pattern.flags.replace(/[gy]/g, "") + "y")
+    }));
+    let position = 0;
+    while (position < source.length) {
+        let matched = false;
+        for (const rule of rules) {
+            rule.pattern.lastIndex = position;
+            const match = rule.pattern.exec(source);
+            if (!match?.[0].length) continue;
+            const end = position + match[0].length;
+            const [contentStart, contentEnd] = rule.content?.(match[0]) ?? [0, match[0].length];
+            yield { name: rule.name, start: position, end,
+                contentStart: position + contentStart, contentEnd: position + contentEnd };
+            position = end;
+            matched = true;
+            break;
+        }
+        if (!matched) position++;
+    }
+}
 
 function mappedText(parent, source, start, end) {
     if (start === end) return;
@@ -45,39 +45,20 @@ export default function createCodeDOM(source, liveRoot, language = "text") {
         start: 0, contentStart: 0, contentEnd: source.length, end: source.length,
         kind: "root", language, tag: "div"
     });
-    const rules = (codeRules[language] || []).map(rule => ({
-        ...rule,
-        pattern: new RegExp(rule.pattern.source,
-            rule.pattern.flags.replace(/[gy]/g, "") + "y")
-    }));
-    let position = 0, plain = 0;
-    while (position < source.length) {
-        let token;
-        for (const rule of rules) {
-            rule.pattern.lastIndex = position;
-            const match = rule.pattern.exec(source);
-            if (match?.[0].length) {
-                token = { rule, end: position + match[0].length };
-                break;
-            }
-        }
-        if (!token) {
-            position++;
-            continue;
-        }
-        mappedText(staging, source, plain, position);
+    const tokens = language === "html" ? htmlTokens(source) : ruleTokens(source, codeRules[language] || []);
+    let plain = 0;
+    for (const token of tokens) {
+        mappedText(staging, source, plain, token.start);
         const node = doc.createElement("span");
-        node.className = `code-token code-${token.rule.name}`;
-        mappedText(node, source, position, token.end);
-        const [contentStart, contentEnd] = token.rule.content?.(
-            source.slice(position, token.end)) ?? [0, token.end - position];
+        node.className = `code-token code-${token.name}`;
+        mappedText(node, source, token.start, token.end);
         setSourceRange(node, {
-            start: position, contentStart: position + contentStart,
-            contentEnd: position + contentEnd, end: token.end,
+            start: token.start, contentStart: token.contentStart ?? token.start,
+            contentEnd: token.contentEnd ?? token.end, end: token.end,
             kind: "token", language, tag: "span", void: false
         });
         staging.append(node);
-        position = plain = token.end;
+        plain = token.end;
     }
     mappedText(staging, source, plain, source.length);
     if (!source || source.endsWith("\n")) {

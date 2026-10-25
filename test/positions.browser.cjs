@@ -13,8 +13,9 @@ before(async () => {
         res.setHeader('Content-Type', 'application/javascript');
         if (pathname.endsWith('.css')) return res.end('');
         if (pathname === '/text-utils.js') return res.end('export const checkValue=()=>true; export const getAttributes=el=>Object.fromEntries(["array","object","key"].map(name=>[name,el.getAttribute(name)]));');
-        if (pathname === '/crdt.js') return res.end('export default {getText:async()=>window.initialText??"",updateText(data){window.crdtOperations.push(data)}};');
-        if (['/observer.js', '/actions.js'].includes(pathname)) return res.end('export default {init(){}};');
+        if (pathname === '/crdt.js') return res.end('export default {getText:async()=>{window.textReads=(window.textReads||0)+1;return window.initialText??""},updateText(data){window.crdtOperations.push(data)}};');
+        if (pathname === '/observer.js') return res.end('export default {init(config){(window.observerConfigs ||= []).push(config)}};');
+        if (pathname === '/actions.js') return res.end('export default {init(){}};');
         if (pathname === '/updateText') return res.end('export const insertAdjacentElement=()=>{},removeElement=()=>{},setInnerText=()=>{},setAttribute=()=>{},removeAttribute=()=>{},setClass=()=>{},setStyle=()=>{},replaceInnerText=()=>{};');
         if (pathname === '/events-adapter.js') return res.end(fs.readFileSync(
             path.resolve(__dirname, '../../CoCreate-events/src/index.js'), 'utf8'
@@ -78,15 +79,15 @@ async function fixture(run) {
                         'Source positions must not become live attributes');
                 }
             };
-            window.host = (value, type) => {
+            window.host = (value, type, language = 'javascript') => {
                 const element = document.createElement('div');
                 element.setAttribute('editor', type);
-                if (type === 'code') element.setAttribute('editor-language', 'javascript');
+                if (type === 'code') element.setAttribute('editor-language', language);
                 document.body.append(element);
                 element.value = value;
                 element.editor = { dom: type === 'html' ? createHTMLDOM(value, document, element)
                     : type === 'markdown' ? createMarkdownDOM(value, element)
-                    : createCodeDOM(value, element, 'javascript') };
+                    : createCodeDOM(value, element, language) };
                 return element;
             };
         });
@@ -157,6 +158,93 @@ test('code tokens and empty HTML placeholders expose positions on both trees', (
     }), true);
 }));
 
+test('HTML code tokens preserve exact source, entities and shared positions without creating source elements', () => fixture(async page => {
+    assert.equal(await page.evaluate(() => {
+        const value = '<!DOCTYPE html>\n<!-- comment -->\n<h1 title="a > b &quot;yes&quot;" data-id=one disabled>Hello &amp; &#128512;</h1>\n<img src=photo.png />';
+        const element = host(value, 'code', 'html');
+        check(element.textContent === value && element.editor.dom.textContent === value, 'Tokenization must preserve every source character');
+        check(!element.querySelector('h1, img'), 'Source tags must remain code text');
+        check([...element.querySelectorAll('.code-tag')].map(node => node.textContent).join(',') === 'h1,h1,img', 'Tag names should have their own tokens');
+        check(element.querySelector('.code-doctype')?.textContent === '<!DOCTYPE html>', 'DOCTYPE should be recognized');
+        check(element.querySelector('.code-comment')?.textContent === '<!-- comment -->', 'Comments should be recognized');
+        check(element.querySelector('.code-attribute-value')?.textContent === 'a > b ', 'Quoted brackets must remain inside the value');
+        check(element.querySelector('.code-attribute')?.textContent === 'title', 'Attribute names should be separate tokens');
+        check([...element.querySelectorAll('.code-entity')].map(node => node.textContent).join(',') === '&quot;,&quot;,&amp;,&#128512;', 'Entity spelling should be preserved');
+        for (const node of element.querySelectorAll('.code-token')) {
+            const { start, end } = node.editorPosition;
+            check(value.slice(start, end) === node.textContent, 'Token position must address exact source');
+        }
+        paired(element.editor.dom);
+        return true;
+    }), true);
+}));
+
+test('unfinished HTML code stays literal and complete tokens recover after edits', () => fixture(async page => {
+    assert.equal(await page.evaluate(() => {
+        for (const value of ['<', '</', '<h1', '</h1', '<h1 title=', '<h1 title="unfinished >', '<!-- unfinished', '<!DOCTYPE html']) {
+            const element = host(value, 'code', 'html');
+            check(element.textContent === value, 'Incomplete syntax must preserve source');
+            check(!element.querySelector('.code-token'), `Incomplete syntax must stay literal: ${value}`);
+            paired(element.editor.dom);
+        }
+        const value = '<h1>hello</h1>\n<h1>hello</h1>';
+        const element = host(value, 'code', 'html');
+        const rootPosition = element.editorPosition;
+        const broken = value.replace('<h1>', '<h1');
+        updateCode(element, { previous: value, string: broken });
+        check(element.textContent === broken && element.firstChild.nodeType === 3 && element.firstChild.data.startsWith('<h1'),
+            'Breaking a tag should turn it back into literal text');
+        updateCode(element, { previous: broken, string: value });
+        check(element.querySelectorAll('.code-tag').length === 4, 'Completing syntax should restore tokens');
+        check(element.editorPosition === rootPosition, 'The editor position object should survive token recovery');
+        check(element.textContent === value, 'Recovery must not repair or normalize the source');
+        paired(element.editor.dom);
+        return true;
+    }), true);
+}));
+
+test('HTML code treats script and style bodies as literal text without executing or tokenizing inner markup', () => fixture(async page => {
+    assert.equal(await page.evaluate(() => {
+        const script = '<script>window.codeExecuted = true; const markup = "<h1>";</script>';
+        const style = '<style>.example::after { content: "<h1>"; }</style>';
+        const element = host(script + style, 'code', 'html');
+        check(element.textContent === script + style, 'Raw text bodies must preserve their source');
+        check(element.querySelectorAll('.code-tag').length === 4, 'Raw text must not become nested HTML tokens');
+        check(!element.querySelector('script, style, h1') && !window.codeExecuted, 'Code mode must not execute source');
+        paired(element.editor.dom);
+        return true;
+    }), true);
+}));
+
+test('typing and deleting HTML delimiters updates code tokens and preserves the source caret', () => fixture(async page => {
+    await page.evaluate(async () => {
+        const { initElement } = await import('/index.js');
+        const element = document.createElement('div');
+        element.setAttribute('editor', 'code');
+        element.setAttribute('editor-language', 'html');
+        element.setAttribute('crdt', 'false');
+        element.value = '';
+        document.body.append(element);
+        initElement(element);
+        element.focus();
+        window.htmlCode = element;
+    });
+    await page.keyboard.type('<h1');
+    assert.equal(await page.evaluate(() => htmlCode.querySelectorAll('.code-token').length), 0);
+    await page.keyboard.type('>hello</h1>');
+    assert.equal(await page.evaluate(() => htmlCode.querySelectorAll('.code-tag').length), 2);
+    await page.keyboard.press('Backspace');
+    assert.equal(await page.evaluate(() => htmlCode.querySelectorAll('.code-tag').length), 1);
+    await page.keyboard.type('>');
+    assert.equal(await page.evaluate(async () => {
+        const { getSelection } = await import('/selection.js');
+        check(htmlCode.value === '<h1>hello</h1>' && htmlCode.textContent === htmlCode.value, 'Typing must preserve the source');
+        check(getSelection(htmlCode).head === htmlCode.value.length, 'Retokenization must preserve the typing caret');
+        paired(htmlCode.editor.dom);
+        return true;
+    }), true);
+}));
+
 test('iframe document elements share current positions after a document update', () => fixture(async page => {
     assert.equal(await page.evaluate(() => {
         const frame = document.createElement('iframe');
@@ -198,6 +286,78 @@ test('HTML editor setAttribute replaces, adds and removes complete attributes in
         check(!element.value.includes('title'), 'Null values should remove the attribute');
         check(target.getAttribute('style') === 'width: 20px; color: red', 'The live DOM should reconcile from the updated source');
         paired(element.editor.dom.body);
+        return true;
+    }), true);
+}));
+
+test('observed code language changes retokenize current source while preserving selection and local history', () => fixture(async page => {
+    assert.equal(await page.evaluate(async () => {
+        const { initElement } = await import('/index.js');
+        const { getSelection } = await import('/selection.js');
+        const element = document.createElement('div');
+        element.setAttribute('editor', 'code');
+        element.setAttribute('editor-language', 'javascript');
+        element.setAttribute('crdt', 'false');
+        element.value = 'const total = 42;';
+        document.body.append(element);
+        initElement(element);
+        await element.editor.updateText({ start: element.value.length, value: '\n// edited' });
+        const source = element.value;
+        const editor = element.editor, dom = editor.dom, undo = editor.localUndo;
+        const updateText = editor.updateText;
+        element.focus();
+        document.getSelection().setBaseAndExtent(element.querySelector('.code-number').firstChild, 1,
+            element.querySelector('.code-keyword').firstChild, 2);
+        const before = getSelection(element);
+        const observer = observerConfigs.find(config => config.types.includes('attributes'));
+        const language = value => {
+            if (value === null) element.removeAttribute('editor-language');
+            else element.setAttribute('editor-language', value);
+            observer.callback({ target: element, attributeName: 'editor-language' });
+            check(element.value === source, 'Language changes must preserve edited source');
+            check(element.editor === editor && editor.dom === dom && editor.updateText === updateText,
+                'Language changes should retain the editor and its binding');
+            check(editor.localUndo === undo && undo.length === 1, 'Language changes must preserve history');
+            const after = getSelection(element);
+            check(after.anchor === before.anchor && after.head === before.head, 'Source selection must survive retokenization');
+            paired(editor.dom);
+        };
+        language('text');
+        check(!element.querySelector('.code-token') && dom.editorPosition.language === 'text', 'Plain language should remove token wrappers');
+        language('javascript');
+        check(element.querySelector('.code-keyword')?.textContent === 'const', 'JavaScript tokens should return immediately');
+        language(null);
+        check(!element.querySelector('.code-token'), 'A code editor without a language should use plain code');
+        await editor.undo();
+        check(element.value === 'const total = 42;', 'Undo should still restore the edit from before the language change');
+        return true;
+    }), true);
+}));
+
+test('observed iframe code language changes preserve the CRDT binding without reading or writing source', () => fixture(async page => {
+    assert.equal(await page.evaluate(async () => {
+        const { initElement } = await import('/index.js');
+        window.initialText = 'const total = 42;';
+        window.crdtOperations = [];
+        const frame = document.createElement('iframe');
+        for (const [name, value] of Object.entries({ editor: 'code', 'editor-language': 'javascript',
+            realtime: 'true', array: 'test', object: 'document', key: 'code' })) frame.setAttribute(name, value);
+        document.body.append(frame);
+        initElement(frame);
+        await frame.editor.loading;
+        const reads = window.textReads;
+        const updateText = frame.editor.updateText;
+        const observer = observerConfigs.find(config => config.types.includes('attributes'));
+        for (const language of ['text', 'javascript']) {
+            frame.setAttribute('editor-language', language);
+            observer.callback({ target: frame, attributeName: 'editor-language' });
+            check(frame.editor.updateText === updateText && window.textReads === reads,
+                'Language changes must not rebind or reload CRDT');
+            check(frame.value === initialText && !crdtOperations.length, 'Language changes must not submit source edits');
+            check(!!frame.contentDocument.querySelector('.code-keyword') === (language === 'javascript'),
+                'The iframe should reflect its current language');
+            paired(frame.editor.dom);
+        }
         return true;
     }), true);
 }));

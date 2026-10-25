@@ -389,6 +389,22 @@ observer.init({
     attributeFilter: ["array", "object", "key", "realtime", "crdt", "cursors", "editor", "editor-language", "contenteditable"],
     selector: selectors,
     callback(mutation) {
+        const element = mutation.target;
+        const editor = element.editor;
+        const type = element.getAttribute("editor")?.trim().toLowerCase();
+        if (mutation.attributeName === "editor-language" && editor?.init && !editor.loading &&
+            !isNative(element) && !["html", "markdown"].includes(type) &&
+            (type === "code" || element.hasAttribute("editor-language"))) {
+            const root = element.tagName === "IFRAME" ? element.contentDocument.body : element;
+            root.classList.add("cocreate-editor-code");
+            if (!root.style.whiteSpace) root.style.whiteSpace = "pre-wrap";
+            const string = String(element.value ?? "");
+            updateCode(element, { string, previous: string });
+            const data = getAttributes(element);
+            editor.binding = editorBinding(element,
+                !!crdtBinding(element, data, true), data);
+            return;
+        }
         initElement(mutation.target);
     }
 });

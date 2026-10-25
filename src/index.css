@@ -27,6 +27,11 @@
 .code-string { color: #26733a; }
 .code-keyword { color: #7652a3; }
 .code-number { color: #a04a22; }
+.code-tag { color: #285ea8; }
+.code-attribute { color: #a04a22; }
+.code-attribute-value { color: #26733a; }
+.code-punctuation, .code-operator, .code-quote { color: #687078; }
+.code-entity, .code-doctype { color: #7652a3; }
 
 iframe[editor] {
     display: block;

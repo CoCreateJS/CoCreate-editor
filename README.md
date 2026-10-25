@@ -16,8 +16,27 @@ projections and track source positions on corresponding live elements.
 
 Elements initialize automatically. An `editor` or `editor-language` attribute
 activates an editor surface; `contenteditable="false"` disables it. Native
-inputs and textareas retain their browser editing behavior. Code mode includes
-basic JavaScript token rendering; other languages render as plain code text.
+inputs and textareas retain their browser editing behavior. Code mode supports
+HTML tokens and basic JavaScript tokens; other languages render as plain code text.
+
+Use `editor="code" editor-language="html"` to display literal HTML source with
+styleable tag, punctuation, attribute, quote, attribute-value, text, entity,
+comment, and doctype spans. Classes use the `code-` prefix, such as `code-tag`
+and `code-attribute`. Complete tag syntax creates tokens; unfinished or broken
+tags and comments remain literal text until completed. Script and style bodies
+remain literal code text. Source HTML is never executed or normalized.
+
+Language definitions live in `src/editors/language/`: `html.js` contains the
+HTML scanner and `javascript.js` contains the JavaScript rules. The shared code
+renderer and source mapping remain in `src/editors/code.js`.
+
+Change `editor-language` on an initialized code surface to refresh its tokens
+immediately. The current source, selection, history, and CRDT binding are retained:
+
+```js
+element.setAttribute("editor-language", "javascript");
+element.setAttribute("editor-language", "text");
+```
 
 ## Element editor API
 
