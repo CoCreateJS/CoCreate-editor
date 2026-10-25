@@ -1,18 +1,11 @@
 import { getSelection, ownsFocus } from "./selection.js";
-import createDOM from "./editors/dom.js";
-import createMarkdownDOM from "./editors/markdown.js";
-import createCodeDOM from "./editors/code.js";
-import { pointAtSource, reconcile } from "./editors/utilities/projection.js";
-import { reconcileDocument } from "./editors/utilities/document.js";
-import { reconcileMirror, reconcileDoctype, syncMirrorNode } from "./editors/utilities/mirror.js";
+import { invalidatePositionIndex, pointAtSource, reconcile } from "./editors/utilities/projection.js";
+import { reconcileMirror, syncMirrorNode } from "./editors/utilities/mirror.js";
 import { affectedPath, outermostChanges } from "./editors/utilities/affected.js";
-import { brokenHTMLRanges } from "./editors/utilities/recovery.js";
 
-function liveRoot(element, html = false) {
-    if (element.tagName !== "IFRAME") return element;
-    return html ? element.contentDocument.documentElement : element.contentDocument.body;
+function projectionRoot(tree) {
+    return tree?.nodeType === 9 ? tree.body : tree;
 }
-
 function sourceChange(previous, string) {
     let start = 0;
     while (start < previous.length && start < string.length && previous[start] === string[start]) start++;
@@ -77,55 +70,27 @@ function applyToLive(root, live, path, changed) {
     }
 }
 
-function updateProjection(element, change, render) {
+// Each renderer supplies its syntax and tree shape; every update follows this lifecycle.
+export function updateProjection(element, change, {
+    render, root = projectionRoot, reconcile: reconcileTree = reconcile, prepareLive, afterMirror
+}, reset = false) {
     const { string } = change;
     change = normalizedChange(change);
     const selection = selectionFor(element);
-    const staging = render(string);
-    const detached = element.editor.dom;
-    const path = detached ? affectedPath(detached, change) : [staging];
+    const detached = reset ? null : element.editor.dom;
+    const previousRoot = root(detached, element);
+    const staging = render(string, element, change, previousRoot);
+    const path = previousRoot ? affectedPath(previousRoot, change) : [];
     const changed = new Set();
-    if (detached) reconcile(detached, staging, changed);
+    if (detached) reconcileTree(detached, staging, changed);
     else element.editor.dom = staging;
 
-    const live = liveRoot(element);
-    applyToLive(element.editor.dom, live, path, changed);
-    restoreSelection(element.editor.dom, selection, change);
-    element.editor.inputValue = string;
-    element.value = string;
-    if (element.hasAttribute("value")) element.setAttribute("value", string);
-}
-
-export function updateMarkdown(element, change) {
-    updateProjection(element, change, createMarkdownDOM);
-}
-
-export function updateCode(element, change) {
-    const language = element.getAttribute("editor-language")?.trim().toLowerCase() || "text";
-    updateProjection(element, change, source => createCodeDOM(source, undefined, language));
-}
-
-export function updateDOM(element, change) {
-    const { string } = change;
-    change = normalizedChange(change);
-    const selection = selectionFor(element);
-    const oldRoot = element.tagName === "IFRAME"
-        ? element.editor.dom?.documentElement : element.editor.dom?.body;
-    let staging = createDOM(string, element.ownerDocument);
-    const literalRanges = brokenHTMLRanges(oldRoot, staging, change);
-    if (literalRanges.length)
-        staging = createDOM(string, element.ownerDocument, undefined, literalRanges);
-    const path = oldRoot ? affectedPath(oldRoot, change) : [];
-    const changed = new Set();
-    if (element.editor.dom) reconcileDocument(element.editor.dom, staging, changed);
-    else element.editor.dom = staging;
-
-    const live = liveRoot(element, true);
-    if (element.tagName === "IFRAME" && live.contentEditable !== "false") live.contentEditable = "true";
-    const stagedRoot = element.tagName === "IFRAME"
-        ? element.editor.dom.documentElement : element.editor.dom.body;
+    const stagedRoot = root(element.editor.dom, element);
+    invalidatePositionIndex(stagedRoot);
+    const live = element.tagName === "IFRAME" ? root(element.contentDocument, element) : element;
+    prepareLive?.(live, element);
     applyToLive(stagedRoot, live, path, changed);
-    if (element.tagName === "IFRAME") reconcileDoctype(element.editor.dom, live.ownerDocument);
+    afterMirror?.(stagedRoot, live, element);
     restoreSelection(stagedRoot, selection, change);
     element.editor.inputValue = string;
     element.value = string;

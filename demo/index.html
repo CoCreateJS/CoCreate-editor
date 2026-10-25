@@ -3,57 +3,201 @@
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>CoCreate Editor: Text, Code, Markdown and DOM</title>
-        <link rel="stylesheet" href="../dist/CoCreate-editor.css" />
+        <title>CoCreate Editor: On-demand modes and languages</title>
+        <link rel="stylesheet" href="../dist/CoCreate-editor.min.css" />
         <style>
             body { max-width: 60rem; margin: 2rem auto; padding: 0 1rem; font: 16px/1.5 system-ui, sans-serif; }
-            [editor] { display: block; margin: 0 0 2rem; padding: 0.75rem; border: 1px solid #adb5bd; }
-            #document-example { padding: 0; }
+            [editor] { display: block; box-sizing: border-box; width: 100%; min-height: 5rem; padding: 0.75rem; border: 1px solid #adb5bd; }
+            .controls { display: flex; flex-wrap: wrap; align-items: end; gap: 1rem; margin: 1.5rem 0; }
+            label { display: grid; gap: 0.25rem; }
+            button, select { font: inherit; padding: 0.35rem; }
+            section { margin-bottom: 2rem; }
+            pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+            textarea { box-sizing: border-box; width: 100%; font: inherit; padding: 0.5rem; }
+            .parsed-preview { min-height: 2rem; padding: 0.75rem; border: 1px solid #d0d7de; }
         </style>
     </head>
     <body>
         <h1>CoCreate Editor</h1>
+        <p>This page starts without an editor. Try the parser examples first; they return detached DOM
+            without initializing editing. Add an editor below to load the editing core. Open your
+            browser's Network tab to see which modules are requested.</p>
 
-        <h2>Plain text</h2>
-        <div editor="text" contenteditable="true">Type plain text here.</div>
+        <div class="controls">
+            <label>Mode
+                <select id="mode">
+                    <option value="text">Text</option>
+                    <option value="dom">DOM</option>
+                    <option value="markdown">Markdown</option>
+                    <option value="code">Code</option>
+                </select>
+            </label>
+            <label>Code language
+                <select id="language" disabled>
+                    <option value="">None (plain text)</option>
+                    <option value="html">HTML</option>
+                    <option value="javascript">JavaScript</option>
+                    <option value="css">CSS</option>
+                    <option value="json">JSON</option>
+                    <option value="python">Python</option>
+                    <option value="typescript">TypeScript</option>
+                    <option value="sql">SQL</option>
+                    <option value="bash">Bash</option>
+                    <option value="yaml">YAML</option>
+                    <option value="c">C</option>
+                    <option value="go">Go</option>
+                    <option value="java">Java</option>
+                    <option value="php">PHP</option>
+                </select>
+            </label>
+            <button id="add-editor" type="button">Add editor</button>
+            <button id="add-frame" type="button">Add DOM editor in iframe</button>
+        </div>
+        <p id="status" role="status"></p>
 
-        <h2>DOM editor</h2>
-        <div editor="dom" value="&lt;h3&gt;Edit this heading&lt;/h3&gt;&lt;p&gt;HTML is rendered from its source.&lt;/p&gt;"></div>
+        <section>
+            <h2>Parse Markdown without an editor</h2>
+            <p><code>parseMarkdown()</code> returns detached rendered DOM. This example displays the
+                rendered result and its serialized inner HTML.</p>
+            <label>Markdown source
+                <textarea id="markdown-source" rows="5"># Stored message
 
-        <h2>Markdown</h2>
-        <div editor="markdown" value="# Markdown&#10;&#10;Write **Markdown** here."></div>
+This **Markdown** is rendered without initializing an editor.</textarea>
+            </label>
+            <button id="parse-markdown" type="button">Parse Markdown</button>
+            <h3>Rendered DOM</h3>
+            <div id="markdown-preview" class="parsed-preview"></div>
+            <h3>innerHTML</h3>
+            <pre id="markdown-html"></pre>
+        </section>
 
-        <h2>HTML code</h2>
-        <div editor="code" editor-language="html" value="&lt;h1 class=&quot;greeting&quot;&gt;hello&lt;/h1&gt;&#10;&lt;h1&gt;hello&lt;/h1&gt;"></div>
+        <section>
+            <h2>Parse code without an editor</h2>
+            <p><code>parseCode()</code> loads only the selected language parser and returns detached
+                syntax-highlighted DOM.</p>
+            <label>Code language
+                <select id="parse-language">
+                    <option value="javascript">JavaScript</option>
+                    <option value="html">HTML</option>
+                    <option value="css">CSS</option>
+                    <option value="json">JSON</option>
+                    <option value="python">Python</option>
+                    <option value="typescript">TypeScript</option>
+                    <option value="sql">SQL</option>
+                    <option value="bash">Bash</option>
+                    <option value="yaml">YAML</option>
+                    <option value="c">C</option>
+                    <option value="go">Go</option>
+                    <option value="java">Java</option>
+                    <option value="php">PHP</option>
+                </select>
+            </label>
+            <label>Code source
+                <textarea id="code-source" rows="5">const message = "Parsed without an editor";
+console.log(message);</textarea>
+            </label>
+            <button id="parse-code" type="button">Parse code</button>
+            <h3>Rendered DOM</h3>
+            <div id="code-preview" class="parsed-preview"></div>
+            <h3>innerHTML</h3>
+            <pre id="code-html"></pre>
+        </section>
 
-        <h2>JavaScript code</h2>
-        <div editor="code" editor-language="javascript" value="const greeting = &quot;Hello&quot;;&#10;console.log(greeting);"></div>
+        <div id="examples"></div>
 
-        <button id="update-attribute" type="button">Set HTML heading style through the editor</button>
-
-        <h2>HTML document in an iframe</h2>
-        <iframe
-            id="document-example"
-            editor="dom"
-            title="HTML document editor"
-        ></iframe>
-
+        <script src="../dist/CoCreate-editor.min.js"></script>
         <script>
-            document.addEventListener("editor-error", (event) =>
-                console.error("Editor error:", event.detail?.error)
-            );
-        </script>
-        <script src="../dist/CoCreate-editor.js"></script>
-        <script>
-            document.querySelector("#update-attribute").addEventListener("click", () => {
-                const editor = document.querySelector('[editor="dom"]');
-                const target = editor.querySelector("h3");
-                editor.editor.setAttribute({
-                    target,
-                    name: "style",
-                    value: "color: #7652a3; border-bottom: 2px solid currentColor"
-                });
+            const mode = document.querySelector('#mode');
+            const language = document.querySelector('#language');
+            const status = document.querySelector('#status');
+            for (const selector of ['#markdown-source', '#code-source']) {
+                const input = document.querySelector(selector);
+                input.value = input.value.replace(/\n$/, '');
+            }
+            document.querySelector('#parse-markdown').addEventListener('click', async () => {
+                try {
+                    const output = await CoCreate.editor.parseMarkdown(
+                        document.querySelector('#markdown-source').value
+                    );
+                    document.querySelector('#markdown-html').textContent = output.innerHTML;
+                    document.querySelector('#markdown-preview').replaceChildren(output);
+                    status.textContent = 'Markdown parsed without initializing an editor';
+                } catch (error) {
+                    status.textContent = `Unable to parse Markdown: ${error.message}`;
+                }
             });
+            document.querySelector('#parse-code').addEventListener('click', async () => {
+                try {
+                    const output = await CoCreate.editor.parseCode(
+                        document.querySelector('#code-source').value,
+                        document.querySelector('#parse-language').value
+                    );
+                    document.querySelector('#code-html').textContent = output.innerHTML;
+                    document.querySelector('#code-preview').replaceChildren(output);
+                    status.textContent = 'Code parsed without initializing an editor';
+                } catch (error) {
+                    status.textContent = `Unable to parse code: ${error.message}`;
+                }
+            });
+            mode.addEventListener('change', () => { language.disabled = mode.value !== 'code'; });
+            document.addEventListener('editor-error', event => {
+                status.textContent = `Unable to load editor: ${event.detail.error.message}`;
+            });
+
+            async function addEditor(inFrame = false) {
+                const type = inFrame ? 'dom' : mode.value;
+                const selectedLanguage = type === 'code' ? language.value : '';
+                const section = document.createElement('section');
+                const heading = document.createElement('h2');
+                heading.textContent = `${type.toUpperCase()}${selectedLanguage ? ` (${selectedLanguage})` : ''}${inFrame ? ' in iframe' : ''}`;
+                const element = document.createElement(inFrame ? 'iframe' : 'div');
+                element.setAttribute('editor', type);
+                element.setAttribute('crdt', 'false');
+                if (inFrame) element.title = 'DOM document editor';
+                if (selectedLanguage) element.setAttribute('editor-language', selectedLanguage);
+                element.value = type === 'dom' || selectedLanguage === 'html'
+                    ? '<h3>Edit this heading</h3>\n<p>HTML rendered from its source.</p>'
+                    : type === 'markdown' ? '# Markdown\n\nWrite **Markdown** here.'
+                    : selectedLanguage === 'javascript' ? 'const greeting = "Hello";\nconsole.log(greeting);'
+                    : selectedLanguage === 'css' ? '.card { color: #7652a3; padding: 1rem; }'
+                    : selectedLanguage === 'json' ? '{\n  "greeting": "Hello",\n  "count": 3,\n  "active": true\n}'
+                    : selectedLanguage === 'python' ? 'def greet(name):\n    """Return a greeting."""\n    return f"Hello, {name}!"\n\nprint(greet("world"))'
+                    : selectedLanguage === 'typescript' ? 'interface User {\n    name: string;\n    active: boolean;\n}\n\nconst greet = (user: User): string => `Hello, ${user.name}`;'
+                    : selectedLanguage === 'sql' ? 'SELECT name, email\nFROM users\nWHERE active = TRUE\nORDER BY name;'
+                    : selectedLanguage === 'bash' ? '#!/usr/bin/env bash\nname="world"\nif [ -n "$name" ]; then\n  echo "Hello, $name!"\nfi'
+                    : selectedLanguage === 'yaml' ? 'name: CoCreate\nversion: 1.0\nactive: true\nfeatures:\n  - editor\n  - collaboration\nsettings:\n  theme: dark\n  tags: [code, markdown]'
+                    : selectedLanguage === 'c' ? '#include <stdio.h>\n\nint main(void) {\n    printf("Hello, world\\n");\n    return 0;\n}'
+                    : selectedLanguage === 'go' ? 'package main\n\nimport "fmt"\n\nfunc main() {\n    fmt.Println("Hello, world")\n}'
+                    : selectedLanguage === 'java' ? 'public class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello, world");\n    }\n}'
+                    : selectedLanguage === 'php' ? '<?php\ndeclare(strict_types=1);\n\nfunction greet(string $name): string {\n    return "Hello, $name!";\n}\n\necho greet("world");\n?>'
+                    : 'Edit plain text here.';
+                const details = document.createElement('details');
+                const summary = document.createElement('summary');
+                summary.textContent = 'Canonical source';
+                const source = document.createElement('pre');
+                source.textContent = element.value;
+                details.append(summary, source);
+                element.addEventListener('editor-source-change', () => { source.textContent = element.value; });
+                section.append(heading, element, details);
+                document.querySelector('#examples').append(section);
+                status.textContent = `Loading ${heading.textContent}…`;
+                await CoCreate.editor.initElement(element);
+                while (element.editor.loading) await element.editor.loading;
+                if (!element.editor.init) return;
+                status.textContent = `${heading.textContent} ready`;
+                if (type === 'dom') {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.textContent = 'Set heading style through the DOM editor';
+                    button.addEventListener('click', () => element.editor.setAttribute({
+                        target: (inFrame ? element.contentDocument : element).querySelector('h3'),
+                        name: 'style', value: 'color: #7652a3; border-bottom: 2px solid currentColor'
+                    }));
+                    section.append(button);
+                }
+            }
+            document.querySelector('#add-editor').addEventListener('click', () => addEditor());
+            document.querySelector('#add-frame').addEventListener('click', () => addEditor(true));
         </script>
     </body>
 </html>

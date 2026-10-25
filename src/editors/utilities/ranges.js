@@ -16,7 +16,8 @@ export function setSourceRange(node, range) {
         throw new RangeError("Invalid element source boundaries.");
     const value = node.editorPosition ||= {};
     for (const key of Object.keys(value))
-        if (key !== "editorElement" && !Object.hasOwn(range, key)) delete value[key];
-    Object.assign(value, range);
+        if (key !== "editorElement" && key !== "element" && !Object.hasOwn(range, key))
+            delete value[key];
+    Object.assign(value, range, { element: node });
     return value;
 }

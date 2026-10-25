@@ -44,18 +44,27 @@ after(async () => {
     if (server) await new Promise(resolve => server.close(resolve));
 });
 
-async function fixture(run) {
+async function fixture(run, renderers = true) {
     const page = await browser.newPage();
+    const requests = [];
+    page.on("request", request => requests.push(new URL(request.url()).pathname));
     try {
-        await page.goto(origin + '/editors/dom.js');
-        await page.evaluate(async () => {
+        await page.goto(origin + '/selection.js');
+        await page.evaluate(async renderers => {
+            document.body.replaceChildren();
+            window.check = (condition, message) => { if (!condition) throw new Error(message); };
+            if (!renderers) return;
             const [dom, markdown, code, updates, ranges, attribute] = await Promise.all([
                 import('/editors/dom.js'), import('/editors/markdown.js'),
                 import('/editors/code.js'), import('/updates.js'),
                 import('/editors/utilities/ranges.js'),
                 import('/editors/utilities/setAttribute.js')
             ]);
+            await Promise.all([code.loadLanguage('html'), code.loadLanguage('javascript')]);
             Object.assign(window, {
+                updateDOM: (element, change) => updates.updateProjection(element, change, dom.mode),
+                updateMarkdown: (element, change) => updates.updateProjection(element, change, markdown.mode),
+                updateCode: (element, change) => updates.updateProjection(element, change, code.mode),
                 createDOM: dom.default, createMarkdownDOM: markdown.default,
                 createCodeDOM: code.default, ...updates, ...ranges,
                 setHTMLAttribute: attribute.setHTMLAttribute
@@ -71,12 +80,20 @@ async function fixture(run) {
                     check(!!node.editorPosition, `Missing position: ${node.nodeName}`);
                     check(node.editorPosition === node.liveNode?.editorPosition,
                         `Unshared position: ${node.nodeName}`);
+                    check(["start", "end", "contentStart", "contentEnd"].every(name =>
+                        Number.isInteger(node.editorPosition[name])),
+                        `Missing object position fields: ${node.nodeName}`);
                     check(getSourceRange(node.liveNode) === node.editorPosition,
                         'Live range lookup must use the shared object');
+                    check(node.editorPosition.element === node,
+                        'Position references must point to their indexed element');
                     check(node.editorPosition.editorElement === editorElement,
                         `Wrong editor owner: ${node.nodeName}`);
                     check(![...node.liveNode.attributes].some(attr => /^data-(source|md)-/.test(attr.name)),
                         'Source positions must not become live attributes');
+                    check(![...node.attributes].some(attr =>
+                        /^data-(?:source|md)-(?:start|end|after|content-start|content-end)$/.test(attr.name)),
+                        'Source position fields must stay on the position object');
                 }
             };
             window.host = (value, type, language = 'javascript') => {
@@ -90,8 +107,8 @@ async function fixture(run) {
                     : createCodeDOM(value, element, language) };
                 return element;
             };
-        });
-        await run(page);
+        }, renderers);
+        await run(page, requests);
     } finally { await page.close(); }
 }
 
@@ -119,6 +136,92 @@ test('DOM editor shares positions and preserves object identity through attribut
         check(section.lastChild.tagName === 'H2', 'Replaced node should render');
         check(section.lastChild.editorPosition !== secondPosition, 'Replacement must have its own object');
         paired(element.editor.dom.body);
+        return true;
+    }), true);
+}));
+
+test('rendered updates normalize changes and retain source selections in every editor mode', () => fixture(async page => {
+    assert.equal(await page.evaluate(async () => {
+        const { getSelection } = await import('/selection.js');
+        for (const [type, value, update] of [
+            ['dom', '<p>alpha</p><p>tail</p>', updateDOM],
+            ['markdown', 'alpha\n\ntail', updateMarkdown],
+            ['code', 'alpha\ntail', updateCode]
+        ]) {
+            const element = host(value, type);
+            element.contentEditable = 'true';
+            element.setAttribute('value', value);
+            element.focus();
+            const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+            let node;
+            while ((node = walker.nextNode())) {
+                if (node.data.includes('tail')) break;
+            }
+            const offset = node.data.indexOf('tail') + 2;
+            document.getSelection().setBaseAndExtent(node, offset, node, offset);
+            const next = value.replace('alpha', 'alphabet');
+            update(element, { previous: value, string: next, start: 0, length: 0, value: 'stale' });
+            check(getSelection(element)?.anchor === next.indexOf('tail') + 2,
+                `${type}: the caret should follow the source change`);
+            check(element.value === next && element.editor.inputValue === next && element.getAttribute('value') === next,
+                `${type}: source values should agree after rendering`);
+            paired(type === 'dom' ? element.editor.dom.body : element.editor.dom);
+        }
+        return true;
+    }), true);
+}));
+
+test('DOM updates keep following siblings and selection when a tag breaks and is repaired', () => fixture(async page => {
+    assert.equal(await page.evaluate(() => {
+        const value = '<p>first</p><p>second</p>';
+        const element = host(value, 'dom');
+        const second = element.lastChild, position = second.editorPosition;
+        element.contentEditable = 'true';
+        element.focus();
+        document.getSelection().setBaseAndExtent(second.firstChild, 3, second.firstChild, 3);
+        const broken = value.replace('</p>', '</p');
+        updateDOM(element, { previous: value, string: broken });
+        check(element.firstChild.nodeType === 3 && element.firstChild.data === '<p>first</p',
+            'The damaged element should become literal source text');
+        check(element.lastChild === second && position.start === broken.indexOf('<p>second'),
+            'The following sibling should retain its identity and current range');
+        check(document.getSelection().anchorNode === second.firstChild && document.getSelection().anchorOffset === 3,
+            'Recovery should preserve the caret in the following sibling');
+        paired(element.editor.dom.body);
+        updateDOM(element, { previous: broken, string: value });
+        check(element.firstChild.tagName === 'P' && element.lastChild === second,
+            'Repair should render the first element without replacing its sibling');
+        check(second.editorPosition === position && position.start === value.indexOf('<p>second'),
+            'The sibling range object should survive repair');
+        paired(element.editor.dom.body);
+        return true;
+    }), true);
+}));
+
+test('language-only nested editors stay isolated during selection, reconciliation and text updates', () => fixture(async page => {
+    assert.equal(await page.evaluate(async () => {
+        const { project, getSelection, ownsFocus } = await import('/selection.js');
+        const { reconcile } = await import('/editors/utilities/projection.js');
+        const { updateTextElement } = await import('/editors/text.js');
+        const element = document.createElement('div');
+        element.contentEditable = 'true';
+        element.innerHTML = 'A<span editor-language="javascript">child draft</span>Z';
+        document.body.append(element);
+        const nested = element.querySelector('span');
+        element.focus();
+        document.getSelection().setBaseAndExtent(nested.firstChild, 2, nested.firstChild, 4);
+        check(project(element).text === 'A\uFFFCZ', 'Nested editor contents should occupy one source position');
+        check(getSelection(element) === null && !ownsFocus(element),
+            'A selection inside the child should not belong to its parent');
+        const staging = document.createElement('div');
+        staging.innerHTML = 'A<span editor-language="javascript">source template</span>Z';
+        reconcile(element, staging);
+        check(element.querySelector('span') === nested && nested.textContent === 'child draft',
+            'Parent reconciliation should preserve the child editor and its contents');
+        updateTextElement(element, 'XA\uFFFCZ', { start: 0, length: 0, value: 'X' });
+        check(element.querySelector('span') === nested && nested.textContent === 'child draft',
+            'Parent text edits should preserve the independent child surface');
+        check(project(element).text === 'XA\uFFFCZ', 'Parent text should update around the child');
         return true;
     }), true);
 }));
@@ -225,7 +328,7 @@ test('typing and deleting HTML delimiters updates code tokens and preserves the 
         element.setAttribute('crdt', 'false');
         element.value = '';
         document.body.append(element);
-        initElement(element);
+        await initElement(element);
         element.focus();
         window.htmlCode = element;
     });
@@ -274,7 +377,7 @@ test('DOM editor setAttribute replaces, adds and removes complete attributes in 
         element.setAttribute('crdt', 'false');
         element.setAttribute('value', value);
         document.body.append(element);
-        text.initElement(element);
+        await text.initElement(element);
         const target = element.querySelector('p');
         check(typeof element.editor.setAttribute === 'function', 'DOM editor should expose setAttribute');
         await element.editor.setAttribute({ target, name: 'style', value: 'width: 20px; color: red' });
@@ -300,7 +403,7 @@ test('observed code language changes retokenize current source while preserving 
         element.setAttribute('crdt', 'false');
         element.value = 'const total = 42;';
         document.body.append(element);
-        initElement(element);
+        await initElement(element);
         await element.editor.updateText({ start: element.value.length, value: '\n// edited' });
         const source = element.value;
         const editor = element.editor, dom = editor.dom, undo = editor.localUndo;
@@ -310,10 +413,10 @@ test('observed code language changes retokenize current source while preserving 
             element.querySelector('.code-keyword').firstChild, 2);
         const before = getSelection(element);
         const observer = observerConfigs.find(config => config.types.includes('attributes'));
-        const language = value => {
+        const language = async value => {
             if (value === null) element.removeAttribute('editor-language');
             else element.setAttribute('editor-language', value);
-            observer.callback({ target: element, attributeName: 'editor-language' });
+            await observer.callback({ target: element, attributeName: 'editor-language' });
             check(element.value === source, 'Language changes must preserve edited source');
             check(element.editor === editor && editor.dom === dom && editor.updateText === updateText,
                 'Language changes should retain the editor and its binding');
@@ -322,11 +425,11 @@ test('observed code language changes retokenize current source while preserving 
             check(after.anchor === before.anchor && after.head === before.head, 'Source selection must survive retokenization');
             paired(editor.dom);
         };
-        language('text');
+        await language('text');
         check(!element.querySelector('.code-token') && dom.editorPosition.language === 'text', 'Plain language should remove token wrappers');
-        language('javascript');
+        await language('javascript');
         check(element.querySelector('.code-keyword')?.textContent === 'const', 'JavaScript tokens should return immediately');
-        language(null);
+        await language(null);
         check(!element.querySelector('.code-token'), 'A code editor without a language should use plain code');
         await editor.undo();
         check(element.value === 'const total = 42;', 'Undo should still restore the edit from before the language change');
@@ -350,7 +453,7 @@ test('observed iframe code language changes preserve the CRDT binding without re
         const observer = observerConfigs.find(config => config.types.includes('attributes'));
         for (const language of ['text', 'javascript']) {
             frame.setAttribute('editor-language', language);
-            observer.callback({ target: frame, attributeName: 'editor-language' });
+            await observer.callback({ target: frame, attributeName: 'editor-language' });
             check(frame.editor.updateText === updateText && window.textReads === reads,
                 'Language changes must not rebind or reload CRDT');
             check(frame.value === initialText && !crdtOperations.length, 'Language changes must not submit source edits');
@@ -361,3 +464,230 @@ test('observed iframe code language changes preserve the CRDT binding without re
         return true;
     }), true);
 }));
+
+test('modes and individual languages are requested only when needed and reused across elements', () => fixture(async (page, requests) => {
+    await page.evaluate(async () => {
+        window.api = (await import('/index.js')).default;
+        window.makeEditor = async (name, language) => {
+            const element = document.createElement('div');
+            element.setAttribute('editor', name);
+            if (language !== undefined) element.setAttribute('editor-language', language);
+            element.setAttribute('crdt', 'false');
+            element.value = '<h1>hello</h1>';
+            document.body.append(element);
+            await api.initElement(element);
+            return element;
+        };
+        await makeEditor('text');
+    });
+    const modeRequests = () => requests.filter(path => /^\/editors\/(dom|markdown|code)\.js$/.test(path));
+    const languageRequests = () => requests.filter(path => path.startsWith('/editors/language/'));
+    assert.deepEqual(modeRequests(), []);
+    assert.deepEqual(languageRequests(), []);
+    await page.evaluate(async () => {
+        window.codeEditor = await makeEditor('code');
+        check(!codeEditor.querySelector('.code-token'), 'Code without a language should be plain text');
+    });
+    assert.deepEqual(modeRequests(), ['/editors/code.js']);
+    assert.deepEqual(languageRequests(), []);
+    await page.evaluate(async () => {
+        codeEditor.setAttribute('editor-language', 'javascript');
+        const observer = observerConfigs.find(config => config.types.includes('attributes'));
+        await observer.callback({ target: codeEditor, attributeName: 'editor-language' });
+        await makeEditor('code', 'js');
+    });
+    assert.deepEqual(languageRequests(), ['/editors/language/javascript.js']);
+    await page.evaluate(async () => {
+        const element = await makeEditor('code', 'html');
+        check(!!element.querySelector('.code-tag'), 'HTML language should highlight source');
+        await makeEditor('code', 'unknown');
+        await makeEditor('code', 'constructor');
+    });
+    assert.deepEqual(languageRequests(), ['/editors/language/javascript.js', '/editors/language/html.js']);
+    assert.deepEqual(modeRequests(), ['/editors/code.js']);
+    await page.evaluate(async () => {
+        const element = await makeEditor('dom');
+        check(element.firstChild.tagName === 'H1', 'DOM mode should render elements');
+        await makeEditor('markdown');
+        await makeEditor('dom');
+    });
+    assert.deepEqual(modeRequests(), ['/editors/code.js', '/editors/dom.js', '/editors/markdown.js']);
+    assert.equal(languageRequests().length, 2);
+}, false));
+
+test('a delayed mode cannot replace a newer mode or source update', () => fixture(async page => {
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    await page.route('**/editors/code.js', async route => { await gate; await route.continue(); });
+    await page.evaluate(async () => {
+        window.api = (await import('/index.js')).default;
+        window.element = document.createElement('div');
+        element.setAttribute('editor', 'text');
+        element.setAttribute('crdt', 'false');
+        element.value = 'original';
+        document.body.append(element);
+        await api.initElement(element);
+        window.observer = observerConfigs.find(config => config.types.includes('attributes'));
+    });
+    const requested = page.waitForRequest('**/editors/code.js');
+    await page.evaluate(() => {
+        element.setAttribute('editor', 'code');
+        window.firstMode = observer.callback({ target: element, attributeName: 'editor' });
+    });
+    await requested;
+    await page.evaluate(async () => {
+        window.sourceUpdate = api.updateElement({ element, string: '# newest' });
+        element.setAttribute('editor', 'markdown');
+        await observer.callback({ target: element, attributeName: 'editor' });
+        check(element.value === '# newest' && element.firstChild.tagName === 'H1',
+            'The latest mode should render the pending source');
+    });
+    release();
+    await page.evaluate(async () => {
+        await Promise.all([firstMode, sourceUpdate]);
+        check(element.editor.modeName === 'markdown' && element.value === '# newest',
+            'The stale load should not overwrite the latest mode or value');
+    });
+}, false));
+
+test('mode changes during initialization finish with the current mode', () => fixture(async page => {
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    await page.route('**/editors/code.js', async route => { await gate; await route.continue(); });
+    const requested = page.waitForRequest('**/editors/code.js');
+    await page.evaluate(async () => {
+        window.api = (await import('/index.js')).default;
+        window.element = document.createElement('div');
+        element.setAttribute('editor', 'code');
+        element.setAttribute('editor-language', 'javascript');
+        element.value = '<p>latest</p>';
+        document.body.append(element);
+        api.initElement(element);
+    });
+    await requested;
+    await page.evaluate(() => {
+        element.setAttribute('editor', 'dom');
+        observerConfigs.find(config => config.types.includes('attributes'))
+            .callback({ target: element, attributeName: 'editor' });
+    });
+    release();
+    await page.evaluate(async () => {
+        while (element.editor.loading) await element.editor.loading;
+        check(element.editor.modeName === 'dom' && element.firstChild.tagName === 'P',
+            'Initialization should apply the most recently requested mode');
+    });
+}, false));
+
+test('failed language loading reports an error and preserves source and history', () => fixture(async page => {
+    await page.route('**/editors/language/javascript.js', route => route.abort());
+    await page.evaluate(async () => {
+        const api = (await import('/index.js')).default;
+        const element = document.createElement('div');
+        element.setAttribute('editor', 'code');
+        element.value = 'const value = 1;';
+        document.body.append(element);
+        await api.initElement(element);
+        await element.editor.updateText({ start: element.value.length, value: '// edit' });
+        let errors = 0;
+        element.addEventListener('editor-error', () => errors++);
+        const observer = observerConfigs.find(config => config.types.includes('attributes'));
+        element.setAttribute('editor-language', 'javascript');
+        await observer.callback({ target: element, attributeName: 'editor-language' });
+        check(errors === 1 && element.value.endsWith('// edit'), 'Load failures should report without discarding edits');
+        element.removeAttribute('editor-language');
+        await observer.callback({ target: element, attributeName: 'editor-language' });
+        await element.editor.undo();
+        check(element.value === 'const value = 1;', 'History should survive failed and recovered loads');
+    });
+}, false));
+
+test('a delayed language does not overwrite a newer language choice', () => fixture(async page => {
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    await page.route('**/editors/language/javascript.js', async route => { await gate; await route.continue(); });
+    await page.evaluate(async () => {
+        const api = (await import('/index.js')).default;
+        window.element = document.createElement('div');
+        element.setAttribute('editor', 'code');
+        element.value = '<h1>hello</h1>';
+        document.body.append(element);
+        await api.initElement(element);
+        window.observer = observerConfigs.find(config => config.types.includes('attributes'));
+    });
+    const requested = page.waitForRequest('**/editors/language/javascript.js');
+    await page.evaluate(() => {
+        element.setAttribute('editor-language', 'javascript');
+        window.firstLanguage = observer.callback({ target: element, attributeName: 'editor-language' });
+    });
+    await requested;
+    await page.evaluate(async () => {
+        element.setAttribute('editor-language', 'html');
+        await observer.callback({ target: element, attributeName: 'editor-language' });
+        check(element.querySelectorAll('.code-tag').length === 2, 'The newer language should render first');
+    });
+    release();
+    await page.evaluate(async () => {
+        await firstLanguage;
+        check(element.editor.modeKey === 'code:html' && element.querySelectorAll('.code-tag').length === 2,
+            'A late language import should not replace the current highlighting');
+    });
+}, false));
+
+test('switching between text and DOM modes preserves source selection and local history', () => fixture(async page => {
+    await page.evaluate(async () => {
+        const api = (await import('/index.js')).default;
+        const { getSelection } = await import('/selection.js');
+        const element = document.createElement('div');
+        element.setAttribute('editor', 'text');
+        element.value = '<p>alpha</p>';
+        document.body.append(element);
+        await api.initElement(element);
+        await element.editor.updateText({ start: 8, value: '!' });
+        const undo = element.editor.localUndo, updateText = element.editor.updateText;
+        element.focus();
+        document.getSelection().setBaseAndExtent(element.firstChild, 5, element.firstChild, 7);
+        const before = getSelection(element);
+        const observer = observerConfigs.find(config => config.types.includes('attributes'));
+        for (const name of ['dom', 'text']) {
+            element.setAttribute('editor', name);
+            await observer.callback({ target: element, attributeName: 'editor' });
+            const selection = getSelection(element);
+            check(selection.anchor === before.anchor && selection.head === before.head,
+                `${name}: source selection should survive switching modes`);
+            check(element.editor.updateText === updateText && element.editor.localUndo === undo,
+                'Switching modes should retain editing methods and history');
+        }
+        check(element.textContent === '<p>alpha!</p>', 'Text mode should show the canonical source');
+        await element.editor.undo();
+        check(element.value === '<p>alpha</p>' && element.textContent === element.value,
+            'Undo should restore the edit from before the mode changes');
+    });
+}, false));
+
+test('typing during an initial mode load is retained when its renderer arrives', () => fixture(async page => {
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    await page.route('**/editors/code.js', async route => { await gate; await route.continue(); });
+    const requested = page.waitForRequest('**/editors/code.js');
+    await page.evaluate(async () => {
+        window.api = (await import('/index.js')).default;
+        window.element = document.createElement('div');
+        element.setAttribute('editor', 'code');
+        element.value = 'start';
+        document.body.append(element);
+        api.initElement(element);
+        check(element.textContent === 'start' && element.editor.init,
+            'The text source should be editable before the requested mode loads');
+        element.focus();
+        document.getSelection().setBaseAndExtent(element.firstChild, 5, element.firstChild, 5);
+    });
+    await requested;
+    await page.keyboard.type('X');
+    release();
+    await page.waitForFunction(() => element.editor.modeName === 'code' && element.value === 'startX');
+    await page.evaluate(async () => {
+        check(element.textContent === 'startX', 'Loading should retain the edit made while waiting');
+        await element.editor.undo();
+        check(element.value === 'start', 'The edit made while loading should remain in local history');
+    });
+}, false));

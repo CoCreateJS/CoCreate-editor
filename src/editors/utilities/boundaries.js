@@ -1,6 +1,9 @@
 // Explicit surfaces own their content; inherited contenteditable does not create one.
 export const boundarySelector =
-    "input, textarea, select, button, iframe, [contenteditable], [editor]";
+    "input, textarea, select, button, iframe, [contenteditable], [editor], [editor-language]";
+export const isNative = element => ["INPUT", "TEXTAREA"].includes(element.tagName);
+export const surface = element => element.tagName === "IFRAME"
+    ? element.contentDocument?.documentElement : element;
 export function boundaryFor(node, root) {
     if (!node || !root.contains(node)) return null;
     let element = node?.nodeType === 1 ? node : node?.parentElement;
@@ -25,16 +28,12 @@ export function selectionBoundary(root) {
     return boundaryFor(selection?.focusNode, root);
 }
 export function ownsFocus(element) {
-    const host =
-        element.tagName === "IFRAME"
-            ? element.contentDocument?.documentElement
-            : element;
+    const host = surface(element);
     if (!host) return false;
     const doc = host.ownerDocument;
-    if (!doc.hasFocus()) return false;
-    if (boundaryFor(doc.activeElement, host) || selectionBoundary(host))
-        return false;
-    if (doc.activeElement === host) return true;
-    const focus = doc.defaultView.getSelection()?.focusNode;
-    return !!focus && host.contains(focus);
+    if (!doc.hasFocus() || boundaryFor(doc.activeElement, host)) return false;
+    if (isNative(element)) return doc.activeElement === element;
+    const selection = doc.getSelection();
+    if (boundaryFor(selection?.anchorNode, host) || selectionBoundary(host)) return false;
+    return doc.activeElement === host || host.contains(doc.activeElement);
 }

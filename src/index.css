@@ -25,9 +25,19 @@
 
 .code-comment { color: #687078; }
 .code-string { color: #26733a; }
-.code-keyword { color: #7652a3; }
+.code-keyword, .code-literal { color: #7652a3; }
 .code-number { color: #a04a22; }
 .code-tag { color: #285ea8; }
+.code-selector { color: #285ea8; }
+.code-property { color: #a04a22; }
+.code-parameter { color: #26733a; }
+.code-at-rule, .code-function { color: #7652a3; }
+.code-decorator { color: #7652a3; }
+.code-type { color: #285ea8; }
+.code-variable { color: #285ea8; }
+.code-date { color: #a04a22; }
+.code-preprocessor, .code-annotation { color: #7652a3; }
+.code-color { color: #26733a; }
 .code-attribute { color: #a04a22; }
 .code-attribute-value { color: #26733a; }
 .code-punctuation, .code-operator, .code-quote { color: #687078; }

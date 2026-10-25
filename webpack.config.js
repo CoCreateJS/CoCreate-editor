@@ -23,8 +23,8 @@ export default async (env, argv) => {
 		output: {
 			path: path.resolve(__dirname, "dist"),
 			filename: isProduction ? "[name].min.js" : "[name].js",
-			libraryExport: "default",
-			library: ["CoCreate", "editor"],
+			chunkFilename: isProduction ? "[name].min.js" : "[name].js",
+			library: { name: ["CoCreate", "editor"], type: "window", export: "default" },
 			clean: true
 		},
 		plugins: [
@@ -64,7 +64,15 @@ export default async (env, argv) => {
 			],
 			splitChunks: {
 				cacheGroups: {
-					defaultVendors: false
+					defaultVendors: false,
+					editorSyntax: {
+						test: /[\\/]editors[\\/]utilities[\\/]config\.js$/,
+						name: "editor-syntax",
+						chunks: "all",
+						minSize: 0,
+						minChunks: 2,
+						reuseExistingChunk: true
+					}
 				}
 			}
 		},

@@ -1,3 +1,6 @@
+import { reconcileDocument } from "./utilities/document.js";
+import { brokenHTMLRanges } from "./utilities/recovery.js";
+import { setHTMLAttribute } from "./utilities/setAttribute.js";
 import {
     syntaxRules,
     voidElements,
@@ -55,13 +58,13 @@ function appendPlaceholder(parent, position) {
 // A trailing newline needs an editable line after it, just like the Markdown projection.
 function terminalLines(parent) {
     const last = parent.lastChild;
+    const position = getSourceRange(parent);
     if (
         !last &&
-        parent.hasAttribute("data-source-content-start") &&
-        !parent.hasAttribute("data-source-void") &&
+        position && !position.void &&
         /^(?:P|DIV|H[1-6]|PRE|BLOCKQUOTE|LI)$/.test(parent.tagName)
     ) {
-        appendPlaceholder(parent, Number(parent.dataset.sourceContentStart));
+        appendPlaceholder(parent, position.contentStart);
         return;
     }
     if (last?.nodeType !== 3 || !last._sourceMap) return;
@@ -73,11 +76,9 @@ function terminalLines(parent) {
     if (!last.length) last.remove();
     for (const [start, end] of maps) {
         const br = document.createElement("br");
-        br.dataset.sourceStart = start;
-        br.dataset.sourceAfter = end;
         br.dataset.sourceVoid = "";
         setSourceRange(br, { start, contentStart: start, contentEnd: end, end,
-            kind: "newline", void: true });
+            kind: "newline", void: true, positionBoundary: true });
         parent.append(br);
     }
     appendPlaceholder(parent, maps.at(-1)[1]);
@@ -429,11 +430,6 @@ function renderHTML(source, { documentMode = true, literalRanges = [] } = {}) {
                     node.type = "application/x-cocreate-inert";
             }
             const closeToken = tokens[close];
-            node.dataset.sourceStart = token.start;
-            node.dataset.sourceAfter = closeToken.end;
-            node.dataset.sourceContentStart = token.end;
-            node.dataset.sourceContentEnd =
-                close === i ? token.end : closeToken.start;
             setSourceRange(node, {
                 start: token.start,
                 contentStart: token.end,
@@ -441,7 +437,8 @@ function renderHTML(source, { documentMode = true, literalRanges = [] } = {}) {
                 end: closeToken.end,
                 kind: "element",
                 tag: info.name,
-                void: !!rule.html.void
+                void: !!rule.html.void,
+                positionBoundary: true
             });
             if (rule.html.void) {
                 node.dataset.sourceVoid = "";
@@ -507,10 +504,6 @@ export default function createDOM(source, ownerDocument = document, liveRoot, li
             kind: "root", tag: "head"
         });
     }
-    if (!staged.body.hasAttribute("data-source-content-start")) {
-        staged.body.dataset.sourceContentStart = "0";
-        staged.body.dataset.sourceContentEnd = String(source.length);
-    }
     if (!staged.body.childNodes.length)
         appendPlaceholder(staged.body, getSourceRange(staged.body).contentEnd);
     staged.doctype?.remove();
@@ -533,3 +526,22 @@ export default function createDOM(source, ownerDocument = document, liveRoot, li
     }
     return staged;
 }
+
+export const mode = {
+    render(source, element, change, previousRoot) {
+        let staging = createDOM(source, element.ownerDocument);
+        const literalRanges = brokenHTMLRanges(previousRoot, staging, change);
+        if (literalRanges.length)
+            staging = createDOM(source, element.ownerDocument, undefined, literalRanges);
+        return staging;
+    },
+    root: (tree, element) => element.tagName === "IFRAME" ? tree?.documentElement : tree?.body,
+    reconcile: reconcileDocument,
+    prepareLive(live, element) {
+        if (element.tagName === "IFRAME" && live.contentEditable !== "false") live.contentEditable = "true";
+    },
+    afterMirror(root, live, element) {
+        if (element.tagName === "IFRAME") reconcileDoctype(root.ownerDocument, live.ownerDocument);
+    },
+    setAttribute: setHTMLAttribute
+};

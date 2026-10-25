@@ -1,9 +1,10 @@
-// Ordered rules: comments and strings own their contents before keywords
-// and numbers can match inside them.
+// Ordered rules let comments and strings own their contents before keywords,
+// numbers, operators, and punctuation are considered. Template expressions are
+// kept inside the string token; this is intentionally a lightweight tokenizer.
 export default [
     {
         name: "comment",
-        pattern: /\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)/y,
+        pattern: /\/\/[^\r\n]*|\/\*[\s\S]*?(?:\*\/|$)/y,
         content: raw => [2, raw.startsWith("/*") && raw.endsWith("*/")
             ? raw.length - 2 : raw.length]
     },
@@ -19,6 +20,18 @@ export default [
             return [1, raw.length - (closed ? 1 : 0)];
         }
     },
-    { name: "keyword", pattern: /\b(?:async|await|break|case|catch|class|const|continue|debugger|default|delete|do|else|export|extends|finally|for|from|function|if|import|in|instanceof|let|new|of|return|static|super|switch|this|throw|try|typeof|var|void|while|yield)\b/y },
-    { name: "number", pattern: /\b\d+(?:\.\d+)?\b/y }
+    {
+        name: "keyword",
+        pattern: /\b(?:as|async|await|break|case|catch|class|const|continue|debugger|default|delete|do|else|enum|export|extends|finally|for|from|function|get|if|import|in|instanceof|let|new|of|return|set|static|super|switch|this|throw|try|typeof|var|void|while|with|yield)\b/y
+    },
+    { name: "literal", pattern: /\b(?:false|null|true)\b/y },
+    {
+        name: "number",
+        pattern: /(?:\b(?:0[xX][\da-fA-F](?:_?[\da-fA-F])*n?|0[bB][01](?:_?[01])*n?|0[oO][0-7](?:_?[0-7])*n?|\d(?:_?\d)*n|\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?(?:[eE][+-]?\d(?:_?\d)*)?)|\.\d(?:_?\d)*(?:[eE][+-]?\d(?:_?\d)*)?)/y
+    },
+    {
+        name: "operator",
+        pattern: />>>=|===|!==|>>>|\*\*=|&&=|\|\|=|\?\?=|<<=|>>=|\.\.\.|=>|==|!=|<=|>=|\+\+|--|\*\*|&&|\|\||\?\?|\?\.|\+=|-=|\*=|\/=|%=|&=|\|=|\^=|<<|>>|[=+\-*\/%&|^!~<>?:]/y
+    },
+    { name: "punctuation", pattern: /[{}()[\],;.]/y }
 ];

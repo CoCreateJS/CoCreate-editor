@@ -96,7 +96,8 @@ function mappedText(parent, text, localStart) {
     parent.append(n);
     return n;
 }
-function markdownRange(node, start, contentStart, contentEnd, end, blockStart = 0) {
+function markdownRange(node, start, contentStart, contentEnd, end, blockStart = 0,
+    positionBoundary = false) {
     const sourceStart = blockStart + start;
     const sourceEnd = blockStart + end;
     const voidNode = /^(?:BR|HR)$/.test(node.tagName);
@@ -106,11 +107,9 @@ function markdownRange(node, start, contentStart, contentEnd, end, blockStart = 
         contentEnd: blockStart + contentEnd,
         end: sourceEnd,
         kind: "element", language: "markdown", tag: node.localName,
-        void: voidNode
+        void: voidNode, positionBoundary
     });
     if (voidNode) {
-        node.dataset.sourceStart = sourceStart;
-        node.dataset.sourceAfter = sourceEnd;
         node.dataset.sourceVoid = "";
     }
 }
@@ -119,6 +118,7 @@ function markdownRange(node, start, contentStart, contentEnd, end, blockStart = 
 function setBlockRange(root, block, contentStart = 0, contentEnd = block.text.length) {
     markdownRange(root, block.start, block.start + contentStart,
         block.start + contentEnd, block.end);
+    root.editorPosition.block = true;
     return root;
 }
 function escaped(text, position) {
@@ -274,9 +274,8 @@ function inline(parent, text, base, blockStart, depth = 0) {
         if (rule.literal) mappedText(node, value, offset);
         else inline(node, value, offset, blockStart, depth + 1);
         const end = base + (best.end ?? match.index + match[0].length);
-        node.dataset.mdAfter = end;
         markdownRange(node, base + match.index, offset,
-            offset + value.length, end, blockStart);
+            offset + value.length, end, blockStart, true);
         parent.append(node);
         position = end - base;
     }
@@ -292,8 +291,6 @@ function parseBlock(block) {
         if (definition)
             applyAttributes(x, definition.markdown.attributes?.(match) || {});
         x.classList.add("md-block");
-        x.dataset.mdStart = block.start;
-        x.dataset.mdEnd = block.end;
         return x;
     };
     const heading = blockMatch(rootLine, "heading");
@@ -303,8 +300,6 @@ function parseBlock(block) {
     if (custom && !custom.rule.markdown.kind) {
         const root = makeElement(custom.rule, custom.match),
             md = custom.rule.markdown;
-        root.dataset.mdStart = block.start;
-        root.dataset.mdEnd = block.end;
         applyAttributes(root, md.attributes?.(custom.match) || {});
         const value = String(md.content(custom.match));
         if (custom.rule.literal)
@@ -390,10 +385,9 @@ function parseBlock(block) {
         inline(root, trailing ? text.slice(0, -trailing) : text, 0, block.start);
         for (let i = 0; i < trailing; i++) {
             const br = document.createElement("br");
-            br.dataset.mdAfter = text.length - trailing + i + 1;
             markdownRange(br, text.length - trailing + i,
                 text.length - trailing + i, text.length - trailing + i + 1,
-                text.length - trailing + i + 1, block.start);
+                text.length - trailing + i + 1, block.start, true);
             root.append(br);
         }
     }
@@ -401,10 +395,9 @@ function parseBlock(block) {
         const trailing = (text.match(/\n+$/) || [""])[0].length;
         for (let i = 0; i < trailing; i++) {
             const br = document.createElement("br");
-            br.dataset.mdAfter = text.length - trailing + i + 1;
             markdownRange(br, text.length - trailing + i,
                 text.length - trailing + i, text.length - trailing + i + 1,
-                text.length - trailing + i + 1, block.start);
+                text.length - trailing + i + 1, block.start, true);
             root.append(br);
         }
     }
@@ -415,8 +408,6 @@ function parseBlock(block) {
             text.length, block.start);
         root.append(placeholder);
     }
-    root.dataset.mdStart = block.start;
-    root.dataset.mdEnd = block.end;
     return setBlockRange(root, block, contentStart, contentEnd);
 }
 export default function createMarkdownDOM(source, liveRoot) {
@@ -445,3 +436,5 @@ export default function createMarkdownDOM(source, liveRoot) {
     return staging;
 }
 
+
+export const mode = { render: source => createMarkdownDOM(source) };

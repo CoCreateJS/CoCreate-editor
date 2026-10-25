@@ -1,9 +1,87 @@
 import { setSourceRange } from "./utilities/ranges.js";
 import { reconcileMirror } from "./utilities/mirror.js";
-import htmlTokens from "./language/html.js";
-import javascript from "./language/javascript.js";
+import observer from "@cocreate/observer";
+export const codeRules = {};
+const tokenizers = {};
+const languages = new Map();
+const loaders = {
+    html: () => import(/* webpackChunkName: "editor-language-html" */ "./language/html.js"),
+    javascript: () => import(/* webpackChunkName: "editor-language-javascript" */ "./language/javascript.js"),
+    css: () => import(/* webpackChunkName: "editor-language-css" */ "./language/css.js"),
+    json: () => import(/* webpackChunkName: "editor-language-json" */ "./language/json.js"),
+    python: () => import(/* webpackChunkName: "editor-language-python" */ "./language/python.js"),
+    typescript: () => import(/* webpackChunkName: "editor-language-typescript" */ "./language/typescript.js"),
+    sql: () => import(/* webpackChunkName: "editor-language-sql" */ "./language/sql.js"),
+    bash: () => import(/* webpackChunkName: "editor-language-bash" */ "./language/bash.js"),
+    yaml: () => import(/* webpackChunkName: "editor-language-yaml" */ "./language/yaml.js"),
+    c: () => import(/* webpackChunkName: "editor-language-c" */ "./language/c.js"),
+    go: () => import(/* webpackChunkName: "editor-language-go" */ "./language/go.js"),
+    java: () => import(/* webpackChunkName: "editor-language-java" */ "./language/java.js"),
+    php: () => import(/* webpackChunkName: "editor-language-php" */ "./language/php.js")
+};
 
-export const codeRules = { javascript, js: javascript };
+export function loadLanguage(language = "text") {
+    language = language.trim().toLowerCase();
+    if (language === "js") language = "javascript";
+    if (language === "py") language = "python";
+    if (language === "ts") language = "typescript";
+    if (language === "sh") language = "bash";
+    if (language === "yml") language = "yaml";
+    if (!Object.hasOwn(loaders, language)) return Promise.resolve();
+    if (!languages.has(language)) {
+        const loading = loaders[language]().then(module => {
+            if (language === "html" || language === "json") tokenizers[language] = module.default;
+            else if (language === "css") codeRules.css = module.default;
+            else if (language === "python") codeRules.python = codeRules.py = module.default;
+            else if (language === "typescript") codeRules.typescript = codeRules.ts = module.default;
+            else if (language === "sql") codeRules.sql = module.default;
+            else if (language === "bash") codeRules.bash = codeRules.sh = module.default;
+            else if (language === "yaml") codeRules.yaml = codeRules.yml = module.default;
+            else if (["c", "go", "java", "php"].includes(language)) codeRules[language] = module.default;
+            else codeRules.javascript = codeRules.js = module.default;
+        }).catch(error => {
+            languages.delete(language);
+            throw error;
+        });
+        languages.set(language, loading);
+    }
+    return languages.get(language);
+}
+
+let observerStarted = false;
+function codeLanguageChanged(target) {
+    if (target.getAttribute("editor")?.trim().toLowerCase() !== "code" &&
+        !target.hasAttribute("editor-language")) return;
+    const language = target.getAttribute("editor-language")?.trim().toLowerCase() || "text";
+    loadLanguage(language).then(() => {
+        if (!target.isConnected ||
+            (target.getAttribute("editor-language")?.trim().toLowerCase() || "text") !== language)
+            return;
+        const EventConstructor = target.ownerDocument.defaultView.CustomEvent;
+        target.dispatchEvent(new EventConstructor("cocreate-editor-language-change", {
+            detail: { element: target }
+        }));
+    }).catch(error => {
+        const EventConstructor = target.ownerDocument.defaultView.CustomEvent;
+        target.dispatchEvent(new EventConstructor("editor-error", {
+            bubbles: true, detail: { error }
+        }));
+    });
+}
+
+function startCodeObserver() {
+    if (observerStarted) return;
+    observerStarted = true;
+    observer.init({
+        name: "CoCreateCodeLanguage",
+        types: ["attributes"],
+        attributeFilter: ["editor-language"],
+        selector: ":is([contenteditable], [editor], [editor-language])",
+        callback({ target }) { codeLanguageChanged(target); }
+    });
+    document.querySelectorAll("[editor='code'], [editor-language]")
+        .forEach(codeLanguageChanged);
+}
 
 function* ruleTokens(source, definitions) {
     const rules = definitions.map(rule => ({
@@ -45,7 +123,7 @@ export default function createCodeDOM(source, liveRoot, language = "text") {
         start: 0, contentStart: 0, contentEnd: source.length, end: source.length,
         kind: "root", language, tag: "div"
     });
-    const tokens = language === "html" ? htmlTokens(source) : ruleTokens(source, codeRules[language] || []);
+    const tokens = tokenizers[language] ? tokenizers[language](source) : ruleTokens(source, codeRules[language] || []);
     let plain = 0;
     for (const token of tokens) {
         mappedText(staging, source, plain, token.start);
@@ -74,3 +152,12 @@ export default function createCodeDOM(source, liveRoot, language = "text") {
     if (liveRoot) reconcileMirror(staging, liveRoot);
     return staging;
 }
+
+export const mode = {
+    prepare: loadLanguage,
+    start: startCodeObserver,
+    render(source, element) {
+        const language = element.getAttribute("editor-language")?.trim().toLowerCase() || "text";
+        return createCodeDOM(source, undefined, language);
+    }
+};

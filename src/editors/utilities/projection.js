@@ -1,5 +1,66 @@
 import { isBoundary, boundaryIdentity, boundaryFor } from "./boundaries.js";
-import { copySourceRange } from "./ranges.js";
+import { copySourceRange, getSourceRange } from "./ranges.js";
+const positionIndexes = new WeakMap();
+
+function markdownBlockStart(node) {
+    for (let current = node.nodeType === 1 ? node : node.parentElement;
+        current; current = current.parentElement) {
+        const range = getSourceRange(current);
+        if (range?.block) return range.start;
+    }
+    return 0;
+}
+
+function depth(node) {
+    let value = 0;
+    while (node) { value++; node = node.parentNode; }
+    return value;
+}
+
+function positionIndex(root) {
+    let index = positionIndexes.get(root);
+    if (index) return index;
+
+    // Keep the exact editorPosition objects attached to the elements. Mutating a
+    // position then updates every consumer that holds a reference to it.
+    const elements = [root, ...root.querySelectorAll("*")]
+        .map(getSourceRange)
+        .filter(Boolean);
+    const boundaries = elements.filter(range => range.positionBoundary)
+        .sort((a, b) => a.end - b.end || depth(b.element) - depth(a.element));
+    const textPositions = [];
+    const walker = root.ownerDocument.createTreeWalker(
+        root,
+        root.ownerDocument.defaultView?.NodeFilter.SHOW_TEXT ?? 4
+    );
+    let node, order = 0;
+    while ((node = walker.nextNode())) {
+        if (boundaryFor(node, root)) continue;
+        const base = markdownBlockStart(node);
+        for (let offset = 0; offset < node.length; offset++) {
+            const span = node._sourceMap?.[offset];
+            const markdownOffset = node._mdMap?.[offset];
+            const start = span ? span[0] : Number.isInteger(markdownOffset)
+                ? base + markdownOffset : null;
+            if (start === null) continue;
+            textPositions.push({
+                start,
+                end: span ? span[1] : start + 1,
+                node,
+                offset,
+                order: order++
+            });
+        }
+    }
+    textPositions.sort((a, b) => a.start - b.start || a.order - b.order);
+    index = { elements, boundaries, textPositions };
+    positionIndexes.set(root, index);
+    return index;
+}
+
+export function invalidatePositionIndex(root) {
+    positionIndexes.delete(root);
+}
 const presentationAttribute = name =>
     name !== "data-editor-placeholder" && !/^data-(?:source|md)-/.test(name);
 // Read native editable DOM and retain coordinates for selection/source mapping.
@@ -31,10 +92,7 @@ export function project(root, source = "") {
     }
     function walk(node) {
         if (node.nodeType === 3) {
-            const base = Number(
-                node.parentElement?.closest("[data-md-start]")?.dataset
-                    .mdStart || 0
-            );
+            const base = markdownBlockStart(node);
             const start = text.length;
             points.set(
                 node,
@@ -66,16 +124,13 @@ export function project(root, source = "") {
         if (
             node.nodeName === "BR" ||
             node.nodeName === "HR" ||
-            node.hasAttribute("data-source-void") ||
+            getSourceRange(node)?.void ||
             (node !== root && isBoundary(node))
         ) {
             append(
                 node.nodeName === "BR" ? "\n" : "\uFFFC",
-                node.hasAttribute("data-source-start")
-                    ? () => [
-                          Number(node.dataset.sourceStart),
-                          Number(node.dataset.sourceAfter)
-                      ]
+                getSourceRange(node)
+                    ? () => [getSourceRange(node).start, getSourceRange(node).end]
                     : null
             );
             return;
@@ -87,8 +142,7 @@ export function project(root, source = "") {
                 (child.hasAttribute("data-editor-placeholder") ||
                     (child.nodeName === "BR" &&
                         child === node.lastChild &&
-                        !child.hasAttribute("data-source-void") &&
-                        !child.hasAttribute("data-md-after")));
+                    !getSourceRange(child)?.positionBoundary));
             if (placeholder) {
                 points.set(child, [text.length]);
                 offsets.push(text.length);
@@ -254,38 +308,44 @@ export function reconcile(live, staged, changed) {
 // Map a canonical source offset back to a rendered text node without changing
 // the document selection. Markdown delimiters are included in each text map.
 export function pointAtSource(root, position) {
-    for (const container of root.querySelectorAll("[data-source-after]")) {
-        if (Number(container.dataset.sourceAfter) === position)
-            return [container.parentNode, [...container.parentNode.childNodes].indexOf(container) + 1];
-        if (!container.textContent && !container.hasAttribute("data-source-void") &&
-            position >= Number(container.dataset.sourceContentStart) &&
-            position <= Number(container.dataset.sourceContentEnd)) return [container, 0];
+    const index = positionIndex(root);
+    let low = 0, high = index.boundaries.length;
+    while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (index.boundaries[middle].end < position) low = middle + 1;
+        else high = middle;
     }
-    for (const br of root.querySelectorAll("[data-md-after]")) {
-        const base = Number(br.closest("[data-md-start]")?.dataset.mdStart || 0);
-        if (base + Number(br.dataset.mdAfter) === position)
-            return [br.parentNode, [...br.parentNode.childNodes].indexOf(br) + 1];
+    let boundary;
+    for (let i = low; i < index.boundaries.length &&
+        index.boundaries[i].end === position; i++)
+        if (!boundary || depth(index.boundaries[i].element) > depth(boundary.element))
+            boundary = index.boundaries[i];
+    if (boundary) {
+        const node = boundary.element;
+        return [node.parentNode, [...node.parentNode.childNodes].indexOf(node) + 1];
     }
-    const walker = root.ownerDocument.createTreeWalker(
-        root,
-        root.ownerDocument.defaultView?.NodeFilter.SHOW_TEXT ?? 4
-    );
-    let node, last;
-    while ((node = walker.nextNode())) {
-        if (boundaryFor(node, root)) continue;
-        const base = Number(node.parentElement.closest("[data-md-start]")?.dataset.mdStart || 0);
-        for (let i = 0; i < node.length; i++) {
-            const span = node._sourceMap?.[i];
-            const mdOffset = node._mdMap?.[i];
-            const offset = span ? span[0] : Number.isInteger(mdOffset) ? base + mdOffset : null;
-            const end = span ? span[1] : offset === null ? null : offset + 1;
-            if (offset === null) continue;
-            if (offset <= position && position < end) return [node, i];
-            last = [node, i + 1];
-        }
-        const end = node._sourceMap?.at(-1)?.[1] ??
-            (node._mdMap?.length ? base + node._mdMap.at(-1) + 1 : undefined);
-        if (position === end) return [node, node.length];
+
+    let empty;
+    for (const range of index.elements) {
+        const node = range.element;
+        if (!node.textContent && !range.void &&
+            range.contentStart <= position && position <= range.contentEnd &&
+            (!empty || range.contentEnd - range.contentStart <
+                empty.contentEnd - empty.contentStart)) empty = range;
     }
-    return last || [root, 0];
+    if (empty) return [empty.element, 0];
+    low = 0;
+    high = index.textPositions.length;
+    while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (index.textPositions[middle].start < position) low = middle + 1;
+        else high = middle;
+    }
+    const next = index.textPositions[low];
+    if (next?.start === position) return [next.node, next.offset];
+    const previous = index.textPositions[low - 1];
+    if (previous && position < previous.end)
+        return [previous.node, previous.offset];
+    if (previous) return [previous.node, previous.offset + 1];
+    return next ? [next.node, next.offset] : [root, 0];
 }
