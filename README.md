@@ -1,7 +1,7 @@
 # CoCreate Editor
 
-CoCreate Editor provides plain text, code, Markdown, and HTML editing from a
-canonical source string. HTML, Markdown, and code modes render detached DOM
+CoCreate Editor provides plain text, code, Markdown, and DOM editing from a
+canonical source string. DOM, Markdown, and code modes render detached DOM
 projections and track source positions on corresponding live elements.
 
 ## Modes
@@ -10,7 +10,7 @@ projections and track source positions on corresponding live elements.
 <div contenteditable="true">Plain text</div>
 <div editor="code" editor-language="javascript">const value = 1;</div>
 <div editor="markdown"># Markdown</div>
-<div editor="html" value="&lt;p&gt;HTML source&lt;/p&gt;"></div>
+<div editor="dom" value="&lt;p&gt;HTML source&lt;/p&gt;"></div>
 <textarea editor="text">Native text input</textarea>
 ```
 
@@ -53,24 +53,24 @@ await element.editor.updateSelection({ selection: { anchor: 0, head: 5 } });
 Local editors expose `updateText({ start, length, value })`, `undo()`, and
 `redo()` using their local source and history.
 
-HTML editors also expose `setAttribute`, which edits the canonical HTML source
+DOM editors also expose `setAttribute`, which edits the canonical HTML source
 and renders the result through the normal update path:
 
 ```js
-await htmlEditor.editor.setAttribute({
-    target: htmlEditor.querySelector(".widget"),
+await domEditor.editor.setAttribute({
+    target: domEditor.querySelector(".widget"),
     name: "style",
     value: "width: 240px; color: rebeccapurple"
 });
 
-await htmlEditor.editor.setAttribute({
-    target: htmlEditor.querySelector(".widget"),
+await domEditor.editor.setAttribute({
+    target: domEditor.querySelector(".widget"),
     name: "aria-label",
     value: "Resizable widget"
 });
 
-await htmlEditor.editor.setAttribute({
-    target: htmlEditor.querySelector(".widget"),
+await domEditor.editor.setAttribute({
+    target: domEditor.querySelector(".widget"),
     name: "title",
     value: null // Remove the attribute.
 });

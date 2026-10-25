@@ -3,7 +3,7 @@
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>CoCreate Editor: Text, Code, Markdown and HTML</title>
+        <title>CoCreate Editor: Text, Code, Markdown and DOM</title>
         <link rel="stylesheet" href="../dist/CoCreate-editor.css" />
         <style>
             body { max-width: 60rem; margin: 2rem auto; padding: 0 1rem; font: 16px/1.5 system-ui, sans-serif; }
@@ -17,8 +17,8 @@
         <h2>Plain text</h2>
         <div editor="text" contenteditable="true">Type plain text here.</div>
 
-        <h2>HTML</h2>
-        <div editor="html" value="&lt;h3&gt;Edit this heading&lt;/h3&gt;&lt;p&gt;HTML is rendered from its source.&lt;/p&gt;"></div>
+        <h2>DOM editor</h2>
+        <div editor="dom" value="&lt;h3&gt;Edit this heading&lt;/h3&gt;&lt;p&gt;HTML is rendered from its source.&lt;/p&gt;"></div>
 
         <h2>Markdown</h2>
         <div editor="markdown" value="# Markdown&#10;&#10;Write **Markdown** here."></div>
@@ -34,7 +34,7 @@
         <h2>HTML document in an iframe</h2>
         <iframe
             id="document-example"
-            editor="html"
+            editor="dom"
             title="HTML document editor"
         ></iframe>
 
@@ -46,7 +46,7 @@
         <script src="../dist/CoCreate-editor.js"></script>
         <script>
             document.querySelector("#update-attribute").addEventListener("click", () => {
-                const editor = document.querySelector('[editor="html"]');
+                const editor = document.querySelector('[editor="dom"]');
                 const target = editor.querySelector("h3");
                 editor.editor.setAttribute({
                     target,

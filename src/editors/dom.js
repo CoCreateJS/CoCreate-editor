@@ -474,7 +474,7 @@ function renderHTML(source, { documentMode = true, literalRanges = [] } = {}) {
     return staging;
 }
 
-export default function createHTMLDOM(source, ownerDocument = document, liveRoot, literalRanges) {
+export default function createDOM(source, ownerDocument = document, liveRoot, literalRanges) {
     const fragment = renderHTML(source, { literalRanges });
     const staged = ownerDocument.implementation.createHTMLDocument("");
     const root = [...fragment.children].find((node) => node.tagName === "HTML");

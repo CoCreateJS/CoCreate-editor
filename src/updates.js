@@ -1,5 +1,5 @@
 import { getSelection, ownsFocus } from "./selection.js";
-import createHTMLDOM from "./editors/html.js";
+import createDOM from "./editors/dom.js";
 import createMarkdownDOM from "./editors/markdown.js";
 import createCodeDOM from "./editors/code.js";
 import { pointAtSource, reconcile } from "./editors/utilities/projection.js";
@@ -105,16 +105,16 @@ export function updateCode(element, change) {
     updateProjection(element, change, source => createCodeDOM(source, undefined, language));
 }
 
-export function updateHTML(element, change) {
+export function updateDOM(element, change) {
     const { string } = change;
     change = normalizedChange(change);
     const selection = selectionFor(element);
     const oldRoot = element.tagName === "IFRAME"
         ? element.editor.dom?.documentElement : element.editor.dom?.body;
-    let staging = createHTMLDOM(string, element.ownerDocument);
+    let staging = createDOM(string, element.ownerDocument);
     const literalRanges = brokenHTMLRanges(oldRoot, staging, change);
     if (literalRanges.length)
-        staging = createHTMLDOM(string, element.ownerDocument, undefined, literalRanges);
+        staging = createDOM(string, element.ownerDocument, undefined, literalRanges);
     const path = oldRoot ? affectedPath(oldRoot, change) : [];
     const changed = new Set();
     if (element.editor.dom) reconcileDocument(element.editor.dom, staging, changed);

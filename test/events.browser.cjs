@@ -32,8 +32,8 @@ async function fixture(run) {
     try {
         await page.goto(origin + '/events.js');
         await page.evaluate(async origin => {
-            const [{default:createEvents}, {default:createHTMLDOM}, {default:markdown}] = await Promise.all([
-                import(origin+'/events.js'), import(origin+'/editors/html.js'), import(origin+'/editors/markdown.js')
+            const [{default:createEvents}, {default:createDOM}, {default:markdown}] = await Promise.all([
+                import(origin+'/events.js'), import(origin+'/editors/dom.js'), import(origin+'/editors/markdown.js')
             ]);
             document.body.innerHTML='';
             window.operations=[]; window.presence=[]; window.positions=[]; window.renderUpdates=[];
@@ -60,7 +60,7 @@ async function fixture(run) {
                 el.editor={}; bindMethods(el); el.getValue=()=>el.value;
                 if(tag==='input'||tag==='textarea') { el.value=value; el.defaultValue=value; }
                 else {el.contentEditable='true'; el.innerHTML=html??value; el.value=value;}
-                if(type) el.editor.dom=type==='html'?createHTMLDOM(value,document):markdown(value);
+                if(type) el.editor.dom=type==='dom'?createDOM(value,document):markdown(value);
                 document.body.append(el); events.addEventListeners(el); el.focus();
                 window.el=el;
                 return el;
@@ -103,9 +103,9 @@ test('rich mobile beforeinput handles Enter, grapheme deletion, and word deletio
     });
     assert.deepEqual(changes,[{start:0,end:11,value:''},{start:6,end:11,value:''},{start:1,end:1,value:'\n'}]);
 }));
-test('HTML and Markdown line-end insertion keeps the content source boundary', () => fixture(async page => {
+test('DOM and Markdown line-end insertion keeps the content source boundary', () => fixture(async page => {
     const changes=await page.evaluate(()=>{
-        make('div','<p>abc</p><p>def</p>','<p>abc</p><p>def</p>','html'); caret(el.firstChild.firstChild,3); edit(el,'insertText','X');
+        make('div','<p>abc</p><p>def</p>','<p>abc</p><p>def</p>','dom'); caret(el.firstChild.firstChild,3); edit(el,'insertText','X');
         make('div','# abc\n\ndef','<h1>abc</h1><p>def</p>','markdown'); caret(el.firstChild.firstChild,3); edit(el,'insertText','Y');
         return result().map(({start,end,value})=>({start,end,value}));
     });
@@ -113,7 +113,7 @@ test('HTML and Markdown line-end insertion keeps the content source boundary', (
 }));
 test('browser target ranges replace the autocorrect range without moving the selection', () => fixture(async page => {
     const outcome=await page.evaluate(()=>{
-        make('div','<p>teh!</p>','<p>teh!</p>','html'); const text=el.firstChild.firstChild; caret(text,4);
+        make('div','<p>teh!</p>','<p>teh!</p>','dom'); const text=el.firstChild.firstChild; caret(text,4);
         const range=new StaticRange({startContainer:text,startOffset:0,endContainer:text,endOffset:3});
         edit(el,'insertReplacementText','the',range);
         return {ops:result(),offset:document.getSelection().anchorOffset};
@@ -200,7 +200,7 @@ test('iframe user operations use the frame source while setter input stays on th
         const frame=document.createElement('iframe'); frame.id='frame'; document.body.append(frame);
         const doc=frame.contentDocument; doc.body.innerHTML='<p>abc</p>'; doc.documentElement.contentEditable='true';
         const value=doc.documentElement.outerHTML; frame.value=value; frame.getValue=()=>frame.value;
-        frame.editor={dom:(await import('/editors/html.js')).default(value,document)};
+        frame.editor={dom:(await import('/editors/dom.js')).default(value,document)};
         for(const [key,val] of Object.entries({array:'a',object:'o',key:'frame',crdt:'true'})) frame.setAttribute(key,val);
         events.addEventListeners(frame); caret(doc.body.firstChild.firstChild,1); edit(doc.documentElement,'insertText','X');
         const first=result()[0];

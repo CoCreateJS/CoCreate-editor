@@ -2,10 +2,10 @@ import "@cocreate/element-prototype";
 import observer from "@cocreate/observer";
 import crdt from "@cocreate/crdt";
 import { getAttributes, checkValue } from "@cocreate/utils";
-import createHTMLDOM from "./editors/html.js";
+import createDOM from "./editors/dom.js";
 import createMarkdownDOM from "./editors/markdown.js";
 import createCodeDOM from "./editors/code.js";
-import { updateHTML, updateMarkdown, updateCode } from "./updates.js";
+import { updateDOM, updateMarkdown, updateCode } from "./updates.js";
 import { getEditorRange, getEditorSelectionRects, getSelection, isNative, ownsFocus } from "./selection.js";
 import { updateTextElement } from "./editors/text.js";
 import { setHTMLAttribute } from "./editors/utilities/setAttribute.js";
@@ -69,23 +69,23 @@ function hydrateElement(element, value) {
     const type = element.getAttribute("editor")?.trim().toLowerCase();
     const code = !isNative(element) &&
         (type === "code" || element.hasAttribute("editor-language"));
-    if (["html", "markdown"].includes(type) || code) {
+    if (["dom", "markdown"].includes(type) || code) {
         element.value = value;
         if (element.hasAttribute("value")) element.setAttribute("value", value);
         const liveRoot = element.tagName === "IFRAME"
-            ? type === "html"
+            ? type === "dom"
                 ? element.contentDocument.documentElement
                 : element.contentDocument.body
             : element;
         if (element.tagName === "IFRAME" &&
             element.contentDocument.documentElement.contentEditable !== "false")
             element.contentDocument.documentElement.contentEditable = "true";
-        if (code && !["html", "markdown"].includes(type)) {
+        if (code && !["dom", "markdown"].includes(type)) {
             liveRoot.classList.add("cocreate-editor-code");
             if (!liveRoot.style.whiteSpace) liveRoot.style.whiteSpace = "pre-wrap";
         }
-        element.editor.dom = type === "html"
-            ? createHTMLDOM(value, element.ownerDocument, liveRoot)
+        element.editor.dom = type === "dom"
+            ? createDOM(value, element.ownerDocument, liveRoot)
             : type === "markdown"
                 ? createMarkdownDOM(value, liveRoot)
                 : createCodeDOM(value, liveRoot,
@@ -159,7 +159,7 @@ export function initElement(element) {
     element.editor.binding = binding;
     element.editor.undo = () => updateText({ element, undoRedo: "undo" });
     element.editor.redo = () => updateText({ element, undoRedo: "redo" });
-    if (element.getAttribute("editor")?.trim().toLowerCase() === "html")
+    if (element.getAttribute("editor")?.trim().toLowerCase() === "dom")
         element.editor.setAttribute = data => setHTMLAttribute(element, data);
     else delete element.editor.setAttribute;
     if (!bound) {
@@ -352,7 +352,7 @@ async function updateElement({ element, array, object, key, value, start, length
     const type = element.getAttribute("editor")?.trim().toLowerCase();
     const code = !isNative(element) &&
         (type === "code" || element.hasAttribute("editor-language"));
-    const rendersDOM = ["html", "markdown"].includes(type) || code;
+    const rendersDOM = ["dom", "markdown"].includes(type) || code;
     if (string === undefined) string = await crdt.getText({ array, object, key });
     if (element.__cocreateEditor) return;
     string ??= "";
@@ -368,7 +368,7 @@ async function updateElement({ element, array, object, key, value, start, length
     }
 
     const change = { string, previous, start, length, value, operation };
-    if (type === "html") updateHTML(element, change);
+    if (type === "dom") updateDOM(element, change);
     else if (type === "markdown") updateMarkdown(element, change);
     else updateCode(element, change);
 }
@@ -393,7 +393,7 @@ observer.init({
         const editor = element.editor;
         const type = element.getAttribute("editor")?.trim().toLowerCase();
         if (mutation.attributeName === "editor-language" && editor?.init && !editor.loading &&
-            !isNative(element) && !["html", "markdown"].includes(type) &&
+            !isNative(element) && !["dom", "markdown"].includes(type) &&
             (type === "code" || element.hasAttribute("editor-language"))) {
             const root = element.tagName === "IFRAME" ? element.contentDocument.body : element;
             root.classList.add("cocreate-editor-code");

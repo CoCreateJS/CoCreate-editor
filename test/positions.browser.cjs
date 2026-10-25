@@ -47,16 +47,16 @@ after(async () => {
 async function fixture(run) {
     const page = await browser.newPage();
     try {
-        await page.goto(origin + '/editors/html.js');
+        await page.goto(origin + '/editors/dom.js');
         await page.evaluate(async () => {
-            const [html, markdown, code, updates, ranges, attribute] = await Promise.all([
-                import('/editors/html.js'), import('/editors/markdown.js'),
+            const [dom, markdown, code, updates, ranges, attribute] = await Promise.all([
+                import('/editors/dom.js'), import('/editors/markdown.js'),
                 import('/editors/code.js'), import('/updates.js'),
                 import('/editors/utilities/ranges.js'),
                 import('/editors/utilities/setAttribute.js')
             ]);
             Object.assign(window, {
-                createHTMLDOM: html.default, createMarkdownDOM: markdown.default,
+                createDOM: dom.default, createMarkdownDOM: markdown.default,
                 createCodeDOM: code.default, ...updates, ...ranges,
                 setHTMLAttribute: attribute.setHTMLAttribute
             });
@@ -85,7 +85,7 @@ async function fixture(run) {
                 if (type === 'code') element.setAttribute('editor-language', language);
                 document.body.append(element);
                 element.value = value;
-                element.editor = { dom: type === 'html' ? createHTMLDOM(value, document, element)
+                element.editor = { dom: type === 'dom' ? createDOM(value, document, element)
                     : type === 'markdown' ? createMarkdownDOM(value, element)
                     : createCodeDOM(value, element, language) };
                 return element;
@@ -95,17 +95,17 @@ async function fixture(run) {
     } finally { await page.close(); }
 }
 
-test('HTML shares positions and preserves object identity through attribute and sibling shifts', () => fixture(async page => {
+test('DOM editor shares positions and preserves object identity through attribute and sibling shifts', () => fixture(async page => {
     assert.equal(await page.evaluate(() => {
         const value = '<section title="x"><p>A</p><p>B</p></section>';
-        const element = host(value, 'html');
+        const element = host(value, 'dom');
         const section = element.firstChild, second = section.lastChild;
         const sectionPosition = section.editorPosition, secondPosition = second.editorPosition;
-        const staged = createHTMLDOM(value, document);
+        const staged = createDOM(value, document);
         const independent = staged.body.querySelector('section').editorPosition;
         paired(element.editor.dom.body);
         const next = value.replace('title="x"', 'title="longer"');
-        updateHTML(element, { previous: value, string: next });
+        updateDOM(element, { previous: value, string: next });
         check(element.firstChild === section && section.lastChild === second, 'Live nodes should be retained');
         check(section.editorPosition === sectionPosition && second.editorPosition === secondPosition,
             'Retained nodes must preserve position objects');
@@ -115,7 +115,7 @@ test('HTML shares positions and preserves object identity through attribute and 
         check(independent.end === value.length, 'Staging must not share mutable positions with the persistent tree');
         paired(element.editor.dom.body);
         const last = next.replace('<p>B</p>', '<h2>B</h2>');
-        updateHTML(element, { previous: next, string: last });
+        updateDOM(element, { previous: next, string: last });
         check(section.lastChild.tagName === 'H2', 'Replaced node should render');
         check(section.lastChild.editorPosition !== secondPosition, 'Replacement must have its own object');
         paired(element.editor.dom.body);
@@ -152,8 +152,8 @@ test('code tokens and empty HTML placeholders expose positions on both trees', (
             'Token should keep its shared position object');
         check(position.start === next.indexOf('1'), 'Token source position must shift');
         paired(element.editor.dom);
-        paired(host('', 'html').editor.dom.body);
-        paired(host('<div></div>', 'html').editor.dom.body);
+        paired(host('', 'dom').editor.dom.body);
+        paired(host('<div></div>', 'dom').editor.dom.body);
         return true;
     }), true);
 }));
@@ -251,12 +251,12 @@ test('iframe document elements share current positions after a document update',
         document.body.append(frame);
         const value = '<html><head><title>T</title></head><body><p>A</p></body></html>';
         frame.value = value;
-        frame.editor = { dom: createHTMLDOM(value, document, frame.contentDocument.documentElement) };
+        frame.editor = { dom: createDOM(value, document, frame.contentDocument.documentElement) };
         const paragraph = frame.contentDocument.querySelector('p');
         const position = paragraph.editorPosition;
         paired(frame.editor.dom.documentElement);
         const next = value.replace('T</title>', 'Title</title>');
-        updateHTML(frame, { previous: value, string: next });
+        updateDOM(frame, { previous: value, string: next });
         check(frame.contentDocument.querySelector('p') === paragraph && paragraph.editorPosition === position,
             'Document updates must retain the body node and its shared position object');
         check(position.start === next.indexOf('<p>'), 'Iframe positions must shift');
@@ -265,18 +265,18 @@ test('iframe document elements share current positions after a document update',
     }), true);
 }));
 
-test('HTML editor setAttribute replaces, adds and removes complete attributes in source', () => fixture(async page => {
+test('DOM editor setAttribute replaces, adds and removes complete attributes in source', () => fixture(async page => {
     assert.equal(await page.evaluate(async () => {
         const text = await import('/index.js');
         const value = '<section data-width="old"><p style = \'color: blue\' title></p></section>';
         const element = document.createElement('div');
-        element.setAttribute('editor', 'html');
+        element.setAttribute('editor', 'dom');
         element.setAttribute('crdt', 'false');
         element.setAttribute('value', value);
         document.body.append(element);
         text.initElement(element);
         const target = element.querySelector('p');
-        check(typeof element.editor.setAttribute === 'function', 'HTML editor should expose setAttribute');
+        check(typeof element.editor.setAttribute === 'function', 'DOM editor should expose setAttribute');
         await element.editor.setAttribute({ target, name: 'style', value: 'width: 20px; color: red' });
         check(element.value.includes('style="width: 20px; color: red"'), 'Existing quoted attribute should be replaced');
         check(element.value.includes('data-width="old"'), 'Attribute names should be matched as complete names');
