@@ -1,3 +1,5 @@
+// HTML void names, plus obsolete param for compatibility. In the editor's
+// source grammar these require an explicit /> completion marker.
 export const voidElements = Object.freeze([
     "area",
     "base",
@@ -140,92 +142,9 @@ export const syntaxRules = [
     { name: "item", tag: "li", html: { tags: ["li"] } },
     { name: "break", tag: "br", html: { tags: ["br"], void: true } }
 ];
-const subscribers = new Set();
-export function subscribeSyntax(callback) {
-    subscribers.add(callback);
-    return () => subscribers.delete(callback);
-}
-function notify() {
-    for (const callback of subscribers) callback();
-}
-function normalize(input) {
-    // Support the first Markdown-only addSyntax shape while migrating callers.
-    const rule =
-        input?.pattern && !input.markdown && !input.html
-            ? {
-                  name: input.name,
-                  tag: input.tag,
-                  create: input.create,
-                  literal: input.literal,
-                  markdown: { ...input, scope: "inline" }
-              }
-            : input;
-    if (
-        !rule ||
-        typeof rule.name !== "string" ||
-        !rule.name ||
-        (!rule.markdown && !rule.html)
-    )
-        throw new TypeError(
-            "A syntax definition requires name and markdown or html."
-        );
-    if (["code", "fence"].includes(rule.name))
-        throw new TypeError("Code boundaries are protected.");
-    if (
-        !rule.create &&
-        !/^(?:div|p|h[1-6]|strong|b|em|i|code|pre|blockquote|ul|ol|li|a|br|hr|span|mark|s|sub|sup|kbd)$/.test(
-            rule.tag
-        )
-    )
-        throw new TypeError("Unsupported syntax element.");
-    if (rule.create && typeof rule.create !== "function")
-        throw new TypeError("create must be a function.");
-    if (rule.markdown) {
-        const md = rule.markdown;
-        if (!(md.pattern instanceof RegExp))
-            throw new TypeError("Markdown syntax requires a pattern.");
-        if (
-            !md.kind &&
-            (typeof md.content !== "function" ||
-                typeof md.offset !== "function")
-        )
-            throw new TypeError(
-                "Markdown syntax requires content(match) and offset(match)."
-            );
-    }
-    if (
-        rule.html &&
-        (!Array.isArray(rule.html.tags) ||
-            !rule.html.tags.length ||
-            rule.html.tags.some(
-                (tag) =>
-                    !/^[a-z][\w-]*$/.test(tag) || ["code", "pre"].includes(tag)
-            ))
-    )
-        throw new TypeError("HTML syntax requires non-protected tag names.");
-    return rule;
-}
-export function addSyntax(input) {
-    const rule = normalize(input);
-    syntaxRules.splice(2, 0, rule);
-    notify();
-    return () => {
-        const index = syntaxRules.indexOf(rule);
-        if (index >= 0) {
-            syntaxRules.splice(index, 1);
-            notify();
-        }
-    };
-}
-export function updateSyntax(name, input) {
-    const rule = normalize({ ...input, name }),
-        index = syntaxRules.findIndex((entry) => entry.name === name);
-    if (index < 0) return addSyntax(rule);
-    const existing = syntaxRules[index];
-    for (const key of Object.keys(existing)) delete existing[key];
-    Object.assign(existing, rule);
-    notify();
-    return existing;
+// Whitespace after a marker is not editable content on its own.
+export function hasMarkdownContent(value) {
+    return /\S/.test(String(value ?? ""));
 }
 export function blockMatch(line, kind) {
     // Fences take priority over configurable block definitions.
@@ -240,7 +159,20 @@ export function blockMatch(line, kind) {
             md.pattern.source,
             md.pattern.flags.replace(/[gy]/g, "")
         ).exec(line);
-        if (match) return { rule, match };
+        if (!match) continue;
+        const content =
+            md.kind === "heading"
+                ? match[2]
+                : ["quote", "list"].includes(md.kind)
+                  ? match[1]
+                  : !md.kind
+                    ? md.content(match)
+                    : undefined;
+        // Fences, setext underlines and horizontal rules have structural syntax.
+        const requiresContent =
+            !md.kind || ["heading", "quote", "list"].includes(md.kind);
+        if (requiresContent && !hasMarkdownContent(content)) continue;
+        return { rule, match };
     }
     return null;
 }

@@ -1,4 +1,7 @@
-import { isBoundary, boundaryIdentity } from "./boundaries.js";
+import { isBoundary, boundaryIdentity, boundaryFor } from "./boundaries.js";
+import { copySourceRange } from "./ranges.js";
+const presentationAttribute = name =>
+    name !== "data-editor-placeholder" && !/^data-(?:source|md)-/.test(name);
 // Read native editable DOM and retain coordinates for selection/source mapping.
 const blocks = new Set([
     "P",
@@ -135,21 +138,28 @@ function key(node) {
 }
 function cloneMapped(node) {
     const clone = node.cloneNode(false);
+    copySourceRange(node, clone);
     clone._mdMap = node._mdMap;
     clone._sourceMap = node._sourceMap;
     for (const child of node.childNodes) clone.appendChild(cloneMapped(child));
     return clone;
 }
-function patch(live, staged) {
+function patch(live, staged, changed) {
     if (
         live.nodeType !== staged.nodeType ||
         live.nodeName !== staged.nodeName
     ) {
+        const parent = live.parentNode;
         live.replaceWith(cloneMapped(staged));
+        changed?.add(parent);
         return;
     }
+    copySourceRange(staged, live);
     if (live.nodeType === 3 || live.nodeType === 8) {
-        if (live.data !== staged.data) live.data = staged.data;
+        if (live.data !== staged.data) {
+            live.data = staged.data;
+            changed?.add(live);
+        }
         live._mdMap = staged._mdMap;
         live._sourceMap = staged._sourceMap;
         return;
@@ -172,14 +182,18 @@ function patch(live, staged) {
               ])
             : new Set();
     for (const attr of [...live.attributes])
-        if (!owned.has(attr.name) && !staged.hasAttribute(attr.name))
+        if (!owned.has(attr.name) && !staged.hasAttribute(attr.name)) {
             live.removeAttribute(attr.name);
+            if (presentationAttribute(attr.name)) changed?.add(live);
+        }
     for (const attr of staged.attributes)
         if (
             !owned.has(attr.name) &&
             live.getAttribute(attr.name) !== attr.value
-        )
+        ) {
             live.setAttribute(attr.name, attr.value);
+            if (presentationAttribute(attr.name)) changed?.add(live);
+        }
     if (owned.has("class")) {
         const previous = new Set(
             (live._editorTemplateClass || "").split(/\s+/)
@@ -190,12 +204,16 @@ function patch(live, staged) {
         const classes = [...new Set([...staged.classList, ...runtime])].join(
             " "
         );
-        if (live.className !== classes) live.className = classes;
+        if (live.className !== classes) {
+            live.className = classes;
+            changed?.add(live);
+        }
     }
     live._editorTemplateClass = staged.className;
-    if (!boundary) reconcile(live, staged);
+    if (!boundary) reconcile(live, staged, changed);
 }
-export function reconcile(live, staged) {
+export function reconcile(live, staged, changed) {
+    copySourceRange(staged, live);
     const old = [...live.childNodes],
         next = [...staged.childNodes];
     let prefix = 0,
@@ -205,7 +223,7 @@ export function reconcile(live, staged) {
         prefix < next.length &&
         key(old[prefix]) === key(next[prefix])
     ) {
-        patch(old[prefix], next[prefix]);
+        patch(old[prefix], next[prefix], changed);
         prefix++;
     }
     while (
@@ -219,11 +237,55 @@ export function reconcile(live, staged) {
         old.length - prefix - suffix,
         next.length - prefix - suffix
     );
-    for (let i = 0; i < count; i++) patch(old[prefix + i], next[prefix + i]);
-    for (let i = prefix + count; i < old.length - suffix; i++) old[i].remove();
+    for (let i = 0; i < count; i++) patch(old[prefix + i], next[prefix + i], changed);
+    for (let i = prefix + count; i < old.length - suffix; i++) {
+        old[i].remove();
+        changed?.add(live);
+    }
     const anchor = suffix ? old[old.length - suffix] : null;
-    for (let i = prefix + count; i < next.length - suffix; i++)
+    for (let i = prefix + count; i < next.length - suffix; i++) {
         live.insertBefore(cloneMapped(next[i]), anchor);
+        changed?.add(live);
+    }
     for (let i = 0; i < suffix; i++)
-        patch(old[old.length - suffix + i], next[next.length - suffix + i]);
+        patch(old[old.length - suffix + i], next[next.length - suffix + i], changed);
+}
+
+// Map a canonical source offset back to a rendered text node without changing
+// the document selection. Markdown delimiters are included in each text map.
+export function pointAtSource(root, position) {
+    for (const container of root.querySelectorAll("[data-source-after]")) {
+        if (Number(container.dataset.sourceAfter) === position)
+            return [container.parentNode, [...container.parentNode.childNodes].indexOf(container) + 1];
+        if (!container.textContent && !container.hasAttribute("data-source-void") &&
+            position >= Number(container.dataset.sourceContentStart) &&
+            position <= Number(container.dataset.sourceContentEnd)) return [container, 0];
+    }
+    for (const br of root.querySelectorAll("[data-md-after]")) {
+        const base = Number(br.closest("[data-md-start]")?.dataset.mdStart || 0);
+        if (base + Number(br.dataset.mdAfter) === position)
+            return [br.parentNode, [...br.parentNode.childNodes].indexOf(br) + 1];
+    }
+    const walker = root.ownerDocument.createTreeWalker(
+        root,
+        root.ownerDocument.defaultView?.NodeFilter.SHOW_TEXT ?? 4
+    );
+    let node, last;
+    while ((node = walker.nextNode())) {
+        if (boundaryFor(node, root)) continue;
+        const base = Number(node.parentElement.closest("[data-md-start]")?.dataset.mdStart || 0);
+        for (let i = 0; i < node.length; i++) {
+            const span = node._sourceMap?.[i];
+            const mdOffset = node._mdMap?.[i];
+            const offset = span ? span[0] : Number.isInteger(mdOffset) ? base + mdOffset : null;
+            const end = span ? span[1] : offset === null ? null : offset + 1;
+            if (offset === null) continue;
+            if (offset <= position && position < end) return [node, i];
+            last = [node, i + 1];
+        }
+        const end = node._sourceMap?.at(-1)?.[1] ??
+            (node._mdMap?.length ? base + node._mdMap.at(-1) + 1 : undefined);
+        if (position === end) return [node, node.length];
+    }
+    return last || [root, 0];
 }

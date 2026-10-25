@@ -3,55 +3,55 @@
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>CoCreate Editor: Text, Markdown and HTML</title>
+        <title>CoCreate Editor: Text, Code, Markdown and HTML</title>
         <link rel="stylesheet" href="../dist/CoCreate-editor.css" />
+        <style>
+            body { max-width: 60rem; margin: 2rem auto; padding: 0 1rem; font: 16px/1.5 system-ui, sans-serif; }
+            [editor] { display: block; margin: 0 0 2rem; padding: 0.75rem; border: 1px solid #adb5bd; }
+            #document-example { padding: 0; }
+        </style>
     </head>
     <body>
         <h1>CoCreate Editor</h1>
-        <h2>Plain text (default)</h2>
-        <div contenteditable="true">Type plain text here.</div>
-        <h2>Native text fields</h2>
-        <input editor="text" value="Native input" />
-        <textarea editor="text">Native textarea</textarea>
-        <h2>HTML document</h2>
+
+        <h2>Plain text</h2>
+        <div editor="text" contenteditable="true">Type plain text here.</div>
+
+        <h2>HTML</h2>
+        <div editor="html" value="&lt;h3&gt;Edit this heading&lt;/h3&gt;&lt;p&gt;HTML is rendered from its source.&lt;/p&gt;"></div>
+
+        <h2>Markdown</h2>
+        <div editor="markdown" value="# Markdown&#10;&#10;Write **Markdown** here."></div>
+
+        <h2>Code</h2>
+        <div editor="code" editor-language="javascript" value="const greeting = &quot;Hello&quot;;&#10;console.log(greeting);"></div>
+
+        <button id="update-attribute" type="button">Set HTML heading style through the editor</button>
+
+        <h2>HTML document in an iframe</h2>
         <iframe
+            id="document-example"
             editor="html"
             title="HTML document editor"
-            srcdoc="&lt;!doctype html&gt;&lt;html&gt;&lt;head&gt;&lt;title&gt;Editable page&lt;/title&gt;&lt;/head&gt;&lt;body&gt;&lt;h1&gt;Edit this document&lt;/h1&gt;&lt;p&gt;The iframe stores the full HTML source.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;"
+            value="&lt;!doctype html&gt;&lt;html&gt;&lt;head&gt;&lt;title&gt;Example&lt;/title&gt;&lt;/head&gt;&lt;body&gt;&lt;h1&gt;Edit this document&lt;/h1&gt;&lt;p&gt;The editor tracks the HTML source.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;"
         ></iframe>
-        <h2>Markdown source</h2>
-        <div
-            id="markdown-example"
-            editor="markdown"
-            aria-label="Markdown message"
-            placeholder="Write Markdown"
-        ></div>
-        <h2>HTML source</h2>
-        <div
-            id="html-example"
-            editor="html"
-            aria-label="HTML message"
-            placeholder="Write HTML"
-        ></div>
+
         <script>
             document.addEventListener("editor-error", (event) =>
-                console.error(
-                    "Editor initialization failed:",
-                    event.target,
-                    event.detail?.error
-                )
+                console.error("Editor error:", event.detail?.error)
             );
         </script>
         <script src="../dist/CoCreate-editor.js"></script>
         <script>
-            document
-                .querySelector("#markdown-example")
-                .setValue("# Markdown\n\nWrite **Markdown** visually.");
-            document
-                .querySelector("#html-example")
-                .setValue(
-                    "<h2>HTML</h2><p>Write <strong>HTML</strong> visually. &amp; keeps its exact source.</p>"
-                );
+            document.querySelector("#update-attribute").addEventListener("click", () => {
+                const editor = document.querySelector('[editor="html"]');
+                const target = editor.querySelector("h3");
+                editor.editor.setAttribute({
+                    target,
+                    name: "style",
+                    value: "color: #7652a3; border-bottom: 2px solid currentColor"
+                });
+            });
         </script>
     </body>
 </html>

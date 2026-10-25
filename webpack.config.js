@@ -1,4 +1,5 @@
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import MiniCssExtractPlugin from "mini-css-extract-plugin";
 import { EsbuildPlugin } from "esbuild-loader";
@@ -6,10 +7,16 @@ import webpackPackage from "@cocreate/webpack";
 
 const { FileUploader } = webpackPackage;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const localPrototype = path.resolve(__dirname, "../CoCreate-element-prototype");
 
 export default async (env, argv) => {
 	const isProduction = argv && argv.mode === "production";
 	const config = {
+		resolve: {
+			alias: existsSync(localPrototype)
+				? { "@cocreate/element-prototype": localPrototype }
+				: {}
+		},
 		entry: {
 			"CoCreate-editor": "./src/index.js"
 		},
