@@ -1,4 +1,4 @@
-import { getSourceRange } from "./ranges.js";
+import { editorDetailsAtChange } from "./details.js";
 
 const overlaps = (start, end, from, to) => start < to && from < end;
 
@@ -19,37 +19,37 @@ function mapped(position, { start, length, value }) {
 
 // Preserve the old element's lexical boundary when its tag becomes incomplete.
 // This prevents an unfinished close from consuming intact following siblings.
-export function brokenHTMLRanges(previousRoot, staging, change) {
-    if (!previousRoot) return [];
+export function brokenHTMLRanges(previous, rendered, change) {
+    if (!previous?.length) return [];
     const start = change.start, end = start + change.length;
-    const touched = [];
-    for (const node of [previousRoot, ...previousRoot.querySelectorAll("*")]) {
-        const range = getSourceRange(node);
-        if (range && touchesTag(range, start, end)) touched.push({ node, range });
-    }
-    if (!touched.length) return [];
-    const rendered = [];
-    for (const node of staging.querySelectorAll("*")) {
-        const range = getSourceRange(node);
-        if (range) rendered.push(range);
-    }
+    const touched = editorDetailsAtChange(previous, start, end).filter(range => range.kind === "element" && touchesTag(range, start, end));
+    rendered = rendered.filter(range => range.kind === "element");
     const damaged = [];
-    for (const { node, range } of touched) {
+    for (const range of touched) {
         const from = mapped(range.start, change), to = mapped(range.end, change);
         // Replacements can repair a tag while changing its length or even its
-        // name. A complete new element covering the old boundary wins over
-        // the old element's exact end position.
-        const repaired = rendered.some(candidate =>
+        // name. If the edit consumes the old end, a replacement may close in
+        // the unchanged suffix beyond mapped(end), e.g. when adjacent markup
+        // was deleted and the shared suffix begins inside the new close tag.
+        const repaired = rendered.some(candidate => (
             Math.min(from, start) <= candidate.start &&
             candidate.start <= from && from < candidate.end &&
-            candidate.end <= to
-        );
+            (candidate.end <= to || range.end < end)
+        ) || (
+            // Removing a close and the following opener can merge siblings.
+            // A new complete wrapper may now own that surviving closing tag.
+            start <= range.start && range.contentStart <= end &&
+            candidate.start < from && candidate.contentStart <= from && candidate.end === to
+        ));
         if (from < to && !repaired)
-            damaged.push({ node, start: from, end: to });
+            damaged.push({ range, start: from, end: to });
     }
-    const outermost = damaged.filter(({ node }) =>
-        !damaged.some(other => other.node !== node && other.node.contains(node))
-    ).sort((a, b) => a.start - b.start);
+    const damagedDetails = new Set(damaged.map(item => item.range));
+    const outermost = damaged.filter(({ range }) => {
+        for (let parent = range.parentDetails; parent; parent = parent.parentDetails)
+            if (damagedDetails.has(parent)) return false;
+        return true;
+    }).sort((a, b) => a.start - b.start);
     const ranges = [];
     for (const { start, end } of outermost) {
         const last = ranges.at(-1);

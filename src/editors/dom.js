@@ -1,6 +1,6 @@
-import { reconcileDocument } from "./utilities/document.js";
+import { applyIndexedDOM, getParsedDetails, setParsedDetails, setUpdateRegion, observeIndexedDOM, hasIndexedMutations } from "./utilities/indexedDOM.js";
 import { brokenHTMLRanges } from "./utilities/recovery.js";
-import { setHTMLAttribute } from "./utilities/setAttribute.js";
+import { setHTMLAttribute, getHTMLAttributes, getHTMLAttribute, removeHTMLAttribute } from "./utilities/setAttribute.js";
 import {
     syntaxRules,
     voidElements,
@@ -9,8 +9,9 @@ import {
     makeElement,
     applyAttributes
 } from "./utilities/config.js";
-import { getSourceRange, setSourceRange } from "./utilities/ranges.js";
+import { getEditorDetails, setEditorDetails, findEditorDetailsContaining } from "./utilities/details.js";
 import { reconcileMirror, reconcileDoctype } from "./utilities/mirror.js";
+import { getSourceMap, markPlaceholder, setSourceMap } from "./utilities/nodeData.js";
 
 const entities = /&(?:#(?:x[\da-fA-F]+|\d+)|[A-Za-z][A-Za-z\d]+);/g;
 function text(parent, raw, start, literal = false) {
@@ -43,45 +44,54 @@ function text(parent, raw, start, literal = false) {
     append(raw.slice(last), start + last);
     if (!value) return;
     node.data = value;
-    node._sourceMap = spans;
+    setSourceMap(node, spans);
+    setEditorDetails(node, {
+        start, contentStart: start, contentEnd: start + raw.length,
+        end: start + raw.length, kind: "text", literal
+    });
     parent.append(node);
+    return node;
 }
 function appendPlaceholder(parent, position) {
     const node = parent.ownerDocument.createElement("br");
-    node.dataset.editorPlaceholder = "";
-    setSourceRange(node, {
+    markPlaceholder(node);
+    setEditorDetails(node, {
         start: position, contentStart: position, contentEnd: position, end: position,
         kind: "placeholder", tag: "br", void: true
     });
     parent.append(node);
+    return node;
 }
 // A trailing newline needs an editable line after it, just like the Markdown projection.
-function terminalLines(parent) {
+function terminalLines(parent, record = () => {}) {
     const last = parent.lastChild;
-    const position = getSourceRange(parent);
+    const position = getEditorDetails(parent);
     if (
         !last &&
         position && !position.void &&
         /^(?:P|DIV|H[1-6]|PRE|BLOCKQUOTE|LI)$/.test(parent.tagName)
     ) {
-        appendPlaceholder(parent, position.contentStart);
+        record(appendPlaceholder(parent, position.contentStart));
         return;
     }
-    if (last?.nodeType !== 3 || !last._sourceMap) return;
+    const sourceMap = getSourceMap(last);
+    if (last?.nodeType !== 3 || !sourceMap) return;
     const count = (last.data.match(/\n+$/) || [""])[0].length;
     if (!count) return;
-    const maps = last._sourceMap.slice(-count);
+    const maps = sourceMap.slice(-count);
     last.data = last.data.slice(0, -count);
-    last._sourceMap = last._sourceMap.slice(0, -count);
+    setSourceMap(last, sourceMap.slice(0, -count));
+    const details = getEditorDetails(last);
+    if (details) details.end = details.contentEnd = maps[0][0];
     if (!last.length) last.remove();
     for (const [start, end] of maps) {
         const br = document.createElement("br");
-        br.dataset.sourceVoid = "";
-        setSourceRange(br, { start, contentStart: start, contentEnd: end, end,
+        setEditorDetails(br, { start, contentStart: start, contentEnd: end, end,
             kind: "newline", void: true, positionBoundary: true });
         parent.append(br);
+        record(br);
     }
-    appendPlaceholder(parent, maps.at(-1)[1]);
+    record(appendPlaceholder(parent, maps.at(-1)[1]));
 }
 function tagInfo(raw) {
     const match = /^<(\/?)\s*([A-Za-z][\w-]*)([\s\S]*?)\s*(\/?)>$/.exec(raw);
@@ -249,6 +259,10 @@ function attrs(node, info, rule) {
 }
 function renderHTML(source, { documentMode = true, literalRanges = [] } = {}) {
     const staging = document.createElement("div");
+    const records = [];
+    const record = node => { if (node) records.push(getEditorDetails(node)); };
+    const writeText = (parent, ...args) => record(text(parent, ...args));
+    const finishLines = parent => terminalLines(parent, record);
     const tokens = tokenize(source, documentMode);
     const pairs = new Map(),
         broken = new Map(),
@@ -323,8 +337,13 @@ function renderHTML(source, { documentMode = true, literalRanges = [] } = {}) {
             const brokenEnd = broken.get(i);
             const forced = literalRanges.find(range => range.start === token.start);
             if (forced) {
-                text(parent, source.slice(forced.start, forced.end), forced.start, true);
-                while (i + 1 < end && tokens[i + 1].start < forced.end) i++;
+                const finish = Math.min(forced.end, end < tokens.length ? tokens[end].start : source.length);
+                writeText(parent, source.slice(forced.start, finish), forced.start, true);
+                while (i + 1 < end && tokens[i + 1].start < finish) i++;
+                // A normalized replacement can end inside a token. Preserve
+                // its surviving suffix instead of dropping it with that token.
+                if (tokens[i].end > finish)
+                    writeText(parent, source.slice(finish, tokens[i].end), finish, true);
                 continue;
             }
             // A malformed opening tag owns its remaining source through its
@@ -343,18 +362,18 @@ function renderHTML(source, { documentMode = true, literalRanges = [] } = {}) {
                 const finish = closing < 0
                     ? (end < tokens.length ? tokens[end].start : source.length)
                     : tokens[closing].end;
-                text(parent, source.slice(token.start, finish), token.start, true);
+                writeText(parent, source.slice(token.start, finish), token.start, true);
                 if (closing < 0) return;
                 i = closing;
                 continue;
             }
             if (brokenEnd !== undefined && brokenEnd < end) {
-                text(parent, source.slice(token.start, tokens[brokenEnd].end), token.start, true);
+                writeText(parent, source.slice(token.start, tokens[brokenEnd].end), token.start, true);
                 i = brokenEnd;
                 continue;
             }
             if (rule && !info.closing && close === undefined && !rule.html.void) {
-                text(
+                writeText(
                     parent,
                     source.slice(
                         token.start,
@@ -363,7 +382,7 @@ function renderHTML(source, { documentMode = true, literalRanges = [] } = {}) {
                     token.start,
                     true
                 );
-                terminalLines(parent);
+                finishLines(parent);
                 return;
             }
             if (documentMode && token.complete && /^<!doctype\s/i.test(token.raw)) {
@@ -371,18 +390,22 @@ function renderHTML(source, { documentMode = true, literalRanges = [] } = {}) {
                 continue;
             }
             if (documentMode && token.complete && token.raw.startsWith("<!--")) {
-                parent.append(document.createComment(token.raw.slice(4, -3)));
+                const comment = document.createComment(token.raw.slice(4, -3));
+                setEditorDetails(comment, { start: token.start, contentStart: token.start,
+                    contentEnd: token.end, end: token.end, kind: "comment" });
+                parent.append(comment);
+                record(comment);
                 continue;
             }
             if (!rule && close !== undefined) {
-                text(parent, source.slice(token.start, tokens[close].end), token.start, true);
+                writeText(parent, source.slice(token.start, tokens[close].end), token.start, true);
                 i = close;
                 continue;
             }
             if (!rule || info.closing || close === undefined) {
                 if (close === undefined && /^<[A-Za-z]/.test(token.raw))
                     literalRemainder = true;
-                text(parent, token.raw, token.start,
+                writeText(parent, token.raw, token.start,
                     literalRemainder || token.raw.startsWith("<"));
                 continue;
             }
@@ -430,7 +453,7 @@ function renderHTML(source, { documentMode = true, literalRanges = [] } = {}) {
                     node.type = "application/x-cocreate-inert";
             }
             const closeToken = tokens[close];
-            setSourceRange(node, {
+            setEditorDetails(node, {
                 start: token.start,
                 contentStart: token.end,
                 contentEnd: close === i ? token.end : closeToken.start,
@@ -440,8 +463,8 @@ function renderHTML(source, { documentMode = true, literalRanges = [] } = {}) {
                 void: !!rule.html.void,
                 positionBoundary: true
             });
+            record(node);
             if (rule.html.void) {
-                node.dataset.sourceVoid = "";
                 if (node.tagName === "HR") node.contentEditable = "false";
             } else if (
                 documentMode &&
@@ -449,25 +472,31 @@ function renderHTML(source, { documentMode = true, literalRanges = [] } = {}) {
             ) {
                 const raw = source.slice(token.end, closeToken.start);
                 const rawText = document.createTextNode(raw);
-                rawText._sourceMap = Array.from(
+                setSourceMap(rawText, Array.from(
                     { length: raw.length },
                     (_, i) => [token.end + i, token.end + i + 1]
-                );
+                ));
+                setEditorDetails(rawText, { start: token.end, contentStart: token.end,
+                    contentEnd: closeToken.start, end: closeToken.start, kind: "text", literal: true });
                 node.append(rawText);
+                record(rawText);
             } else if (rule.literal)
-                text(
+                writeText(
                     node,
                     source.slice(token.end, closeToken.start),
                     token.end
                 );
             else range(node, i + 1, close);
-            terminalLines(node);
+            finishLines(node);
             parent.append(node);
             i = close;
         }
     }
     range(staging, 0, tokens.length);
-    terminalLines(staging);
+    finishLines(staging);
+    const attached = records.filter(item => item.detachDOM.parentNode);
+    for (const item of attached) item.parentDetails = getEditorDetails(item.detachDOM.parentNode) || null;
+    setParsedDetails(staging, attached);
     return staging;
 }
 
@@ -493,19 +522,20 @@ export default function createDOM(source, ownerDocument = document, liveRoot, li
     if (!staged.body)
         staged.documentElement.append(staged.createElement("body"));
     for (const node of [staged.documentElement, staged.body])
-        if (!getSourceRange(node)) setSourceRange(node, {
+        if (!getEditorDetails(node)) setEditorDetails(node, {
             start: 0, contentStart: 0, contentEnd: source.length, end: source.length,
             kind: "root", tag: node.localName
         });
-    if (!getSourceRange(staged.head)) {
-        const start = getSourceRange(staged.documentElement).contentStart;
-        setSourceRange(staged.head, {
+    if (!getEditorDetails(staged.head)) {
+        const start = getEditorDetails(staged.documentElement).contentStart;
+        setEditorDetails(staged.head, {
             start, contentStart: start, contentEnd: start, end: start,
             kind: "root", tag: "head"
         });
     }
+    let placeholder;
     if (!staged.body.childNodes.length)
-        appendPlaceholder(staged.body, getSourceRange(staged.body).contentEnd);
+        placeholder = appendPlaceholder(staged.body, getEditorDetails(staged.body).contentEnd);
     staged.doctype?.remove();
     if (fragment.sourceDoctype) {
         const parsed =
@@ -519,29 +549,81 @@ export default function createDOM(source, ownerDocument = document, liveRoot, li
                 staged.documentElement
             );
     }
+    const records = getParsedDetails(fragment).filter(item => item.detachDOM.parentNode);
+    if (placeholder) records.push(getEditorDetails(placeholder));
+    for (const node of [staged.documentElement, staged.head, staged.body]) {
+        const item = getEditorDetails(node);
+        if (!records.includes(item)) records.push(item);
+    }
+    for (const item of records) item.parentDetails = getEditorDetails(item.detachDOM.parentNode) || null;
+    setParsedDetails(staged, records);
     if (liveRoot) {
         const iframeDocument = liveRoot === liveRoot.ownerDocument.documentElement;
         reconcileMirror(iframeDocument ? staged.documentElement : staged.body, liveRoot);
         if (iframeDocument) reconcileDoctype(staged, liveRoot.ownerDocument);
+        observeIndexedDOM(staged, getEditorDetails(iframeDocument ? staged.documentElement : staged.body).editorElement, liveRoot);
     }
     return staged;
 }
 
+
+// Only the enclosing element is parsed for a content edit. Its unchanged tags
+// provide the same recovery boundary as the full parser. If new syntax escapes
+// that boundary, use the document plan instead.
+function renderRegion(source, element, change) {
+    const end = change.start + change.length;
+    let boundary = findEditorDetailsContaining(element, change.start, end);
+    while (boundary && !(boundary.kind === "element" && !boundary.void &&
+        boundary.contentStart <= change.start && end <= boundary.contentEnd))
+        boundary = boundary.parentDetails;
+    if (!boundary || ["html", "head", "body"].includes(boundary.tag)) return;
+    const offset = boundary.start, finish = boundary.end + change.value.length - change.length;
+    const raw = source.slice(offset, finish);
+    const parse = literalRanges => {
+        const staging = renderHTML(raw, { literalRanges });
+        const records = getParsedDetails(staging);
+        for (const item of records) {
+            for (const name of ["start", "contentStart", "contentEnd", "end"]) item[name] += offset;
+            const map = getSourceMap(item.detachDOM);
+            if (map) setSourceMap(item.detachDOM, map.map(([start, end]) => [start + offset, end + offset]));
+        }
+        return staging;
+    };
+    let staging = parse();
+    const literal = brokenHTMLRanges(element.editor.editorDetails, getParsedDetails(staging), change)
+        .filter(range => offset <= range.start && range.end <= finish)
+        .map(range => ({ start: range.start - offset, end: range.end - offset }));
+    if (literal.length) staging = parse(literal);
+    const roots = getParsedDetails(staging).filter(item => !item.parentDetails);
+    if (roots.length !== 1 || roots[0].kind !== "element" || roots[0].tag !== boundary.tag ||
+        roots[0].start !== offset || roots[0].end !== finish) return;
+    setUpdateRegion(staging, boundary);
+    return staging;
+}
+
 export const mode = {
     render(source, element, change, previousRoot) {
+        const region = previousRoot && !hasIndexedMutations(element.editor.dom) && renderRegion(source, element, change);
+        if (region) return region;
         let staging = createDOM(source, element.ownerDocument);
-        const literalRanges = brokenHTMLRanges(previousRoot, staging, change);
+        const literalRanges = brokenHTMLRanges(
+            element.editor?.editorDetails || [], getParsedDetails(staging), change
+        );
         if (literalRanges.length)
             staging = createDOM(source, element.ownerDocument, undefined, literalRanges);
         return staging;
     },
     root: (tree, element) => element.tagName === "IFRAME" ? tree?.documentElement : tree?.body,
-    reconcile: reconcileDocument,
+    apply: applyIndexedDOM,
     prepareLive(live, element) {
         if (element.tagName === "IFRAME" && live.contentEditable !== "false") live.contentEditable = "true";
     },
     afterMirror(root, live, element) {
+        observeIndexedDOM(root.ownerDocument, element, live);
         if (element.tagName === "IFRAME") reconcileDoctype(root.ownerDocument, live.ownerDocument);
     },
-    setAttribute: setHTMLAttribute
+    attributes: getHTMLAttributes,
+    getAttribute: getHTMLAttribute,
+    setAttribute: setHTMLAttribute,
+    removeAttribute: removeHTMLAttribute
 };

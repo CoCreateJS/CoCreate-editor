@@ -34,14 +34,15 @@ function reportError(element, error) {
 
 function loadForMutation({ target, attributeName }) {
     const wasLoaded = !!corePromise;
-    loadCore().then(core => {
+    return loadCore().then(core => {
         // Code owns language changes once its renderer is active. If a language
         // attribute turns a text surface into a code editor, initialize it here.
-        if (wasLoaded && attributeName === "editor-language" &&
+        if (!wasLoaded) return core.initElement(target);
+        if (attributeName === "editor-language" &&
             !target.editor?.loading &&
             (target.getAttribute("editor")?.trim().toLowerCase() !== "code" ||
                 target.editor?.modeName !== "code"))
-            core.initElement(target);
+            return core.initElement(target);
     }).catch(error => reportError(target, error));
 }
 

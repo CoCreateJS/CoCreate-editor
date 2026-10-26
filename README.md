@@ -138,33 +138,111 @@ await element.editor.updateSelection({ selection: { anchor: 0, head: 5 } });
 Local editors expose `updateText({ start, length, value })`, `undo()`, and
 `redo()` using their local source and history.
 
-DOM editors also expose `setAttribute`, which edits the canonical HTML source
-and renders the result through the normal update path:
+Rendered live elements expose an `editorDetails` object with their source
+boundaries and `liveDOM` / `detachDOM` references. Each record is the same object
+stored in the owning editor's `editorDetails` array, sorted by source `start`;
+`element.editor.findDetailsByStart(start)` performs a binary-search lookup.
+The detached rendered tree stays clean: editor details, source maps, and links
+to live nodes are held in `WeakMap`s instead of DOM properties or attributes.
+
+All three modes index their rendered elements and text through the same record
+contract and absolute source maps. DOM mode also indexes comments and literal
+remnants of broken markup. `element.editor.findDetailsContaining(start, end = start)` finds
+the deepest record containing a source range using binary search and parent
+record links. `element.editor.findDetailsIndex(start, end = start)` returns its
+zero-based index in that same array, or `-1` when no record contains the range.
+Subtree selection locates the start/end bounds with binary search, then scans
+that slice once using parent-record membership.
+The four boundaries distinguish opening tags, content, and
+closing tags; damaged wrappers become indexed literal text through their old
+source boundary and can become elements again when repaired.
+
+DOM, Markdown, and code updates first produce a shared plan with separate `added`,
+`removed`, and `retained` arrays and ordered child sequences. Planning leaves the existing
+nodes, position objects, and index unchanged. All removed objects stay in the
+plan, including descendants; `removeRoots` identifies the outermost nodes
+whose removal removes those descendants. Applying the plan prepares the new
+live nodes, removes those roots, updates retained objects, and inserts the
+ordered sequences using their stored references. Content edits parse only
+the enclosing element. Edits that escape that element's syntax boundary use a
+document-wide parse and the same array-driven mutation path. Native input/IME
+nodes are collected through mutation-record references and reconciled through
+that document plan, without scanning for untracked nodes. Existing DOM trees
+are not queried or traversed to discover affected nodes. Retained details and
+the editor's array keep their identities; later source offsets and text maps
+are shifted as needed. Maintaining these absolute offsets still takes work
+proportional to the following records and maps.
+
+Markdown details also carry `definition` (the matched syntax-rule reference),
+`syntax` (rule name, completion state, and opening/closing marker ranges), and
+one-based `firstLine` / `lastLine` references for the source endpoints. Block
+records carry `lines`: source line ranges, numbers, candidate rules, and prefix
+markers. Line and marker offsets are relative to their owning record's `start`,
+so those references move with the shared record when earlier text shifts.
+
+A Markdown edit looks up the containing record and uses its stored line/block
+references to select the parsing boundary. Safe same-line edits parse just that
+block. Newline changes, changed structural markers, or syntax escaping that
+boundary currently use a full source parse. Both paths build the same completed
+record plan before changing either existing tree.
+
+Code tokens retain their language, token category (`token`), matched rule or
+custom tokenizer (`definition`), content/delimiter ranges (`syntax`), and line
+references. Unhighlighted text is indexed too. Tokenization currently runs over
+the full source so multiline and lookahead rules remain correct; unchanged
+segments reuse their canonical detached nodes through independent metadata
+snapshots. Only changed segments need candidate DOM construction. The common
+planner commits the new ranges/maps and updates the existing live nodes.
+All three modes now use this record-planning lifecycle; the old tree-based
+rendering-update fallback is no longer used.
+
+A mode or code-language change takes a separate full-render path: read the
+current canonical value, build a fresh detached tree and live nodes, and replace
+the live contents directly. The previous rendering and details index are not
+reconciled or reused. The CRDT binding, current text, and undo history remain
+intact; pending renders for a previous language cannot overwrite the new one.
+
+Source-backed HTML elements expose attribute helpers on their shared
+`editorDetails` object:
 
 ```js
-await domEditor.editor.setAttribute({
-    target: domEditor.querySelector(".widget"),
-    name: "style",
-    value: "width: 240px; color: rebeccapurple"
-});
-
-await domEditor.editor.setAttribute({
-    target: domEditor.querySelector(".widget"),
-    name: "aria-label",
-    value: "Resizable widget"
-});
-
-await domEditor.editor.setAttribute({
-    target: domEditor.querySelector(".widget"),
-    name: "title",
-    value: null // Remove the attribute.
-});
+const details = selectedElement.editorDetails;
+const attributes = details.attributes;       // Array of source attribute records
+const attribute = details.getAttribute("class"); // Matching record, or null
+await details.setAttribute("class", "card active");
+await details.setAttribute("data-label", ""); // Present with an empty value
+await details.removeAttribute("data-label");
 ```
 
-The target must belong to that editor and have a current source position. The
-method matches a complete attribute name within the target's opening tag,
-preserves other source text, and escapes the value for a quoted HTML attribute.
-Pass the complete new value for attributes such as `style`.
+Each record contains `name`, decoded `value`, `rawValue`, `nameStart`, `nameEnd`,
+`valueStart`, and `valueEnd`. Positions are absolute UTF-16 offsets in the
+canonical source; ends are exclusive and value ranges exclude quotes. Boolean
+attributes have `value: ""` and null value positions, while quoted empty values
+have equal start/end positions. Records also expose the full attribute range
+(`start`, `end`), `whitespaceStart`, `equals`, `quote`, `quoteStart`, and `quoteEnd`.
+Attribute names match case-insensitively and source order/duplicate names are
+preserved. `getAttributes()` is an alias for reading the `attributes` array.
+
+The parser reads only the selected element's current opening tag. Returned
+attribute records are snapshots; retain the shared element details and call its
+helpers again when submitting an edit. Set/remove resolve current positions and
+send the smallest source replacement through `updateText`, using the existing
+local or CRDT binding. Existing spacing and quotes are preserved; unquoted values
+are quoted when necessary. Removal deletes all occurrences of a duplicated name.
+Stale, foreign, and non-HTML-source records cannot edit another element.
+
+The owning DOM editor exposes the same operations with a target:
+
+```js
+const attributes = domEditor.editor.attributes({ target: selectedElement });
+const attribute = domEditor.editor.getAttribute({ target: selectedElement, name: "class" });
+await domEditor.editor.setAttribute({ target: selectedElement, name: "style", value: "width: 240px" });
+await domEditor.editor.removeAttribute({ target: selectedElement, name: "title" });
+```
+
+Pass the complete new value for attributes such as `style`. Passing `null` to
+`setAttribute` remains an alias for removal. Native element attribute APIs are
+unchanged; these source-aware helpers live on the editor/details objects.
 
 Without a valid CRDT binding, edits use local source and local undo/redo history.
 Editors with a valid `array`, `object`, and `key` binding use CRDT; add

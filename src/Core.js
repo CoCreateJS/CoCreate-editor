@@ -35,11 +35,12 @@ function crdtBinding(element, data, editorSurface) {
         !key.startsWith("$") && checkValue(array) && checkValue(object) && checkValue(key);
 }
 
-function editorBinding(element, bound, data) {
+function editorBinding(element, bound, data, includeMode = true) {
     return JSON.stringify([
         bound ? element.getAttribute("realtime") === "true" ? "live" : "draft" : "local",
         data.array, data.object, data.key,
-        element.getAttribute("editor"), element.getAttribute("editor-language"),
+        includeMode ? element.getAttribute("editor") : null,
+        includeMode ? element.getAttribute("editor-language") : null,
         element.getAttribute("cursors")
     ]);
 }
@@ -74,8 +75,10 @@ function applyMode(element, value, settings, renderer, change) {
         delete editor.codeRoot;
         delete editor.codeWhiteSpace;
     }
-    if (renderer?.setAttribute) editor.setAttribute = data => renderer.setAttribute(element, data);
-    else delete editor.setAttribute;
+    for (const method of ["attributes", "getAttribute", "setAttribute", "removeAttribute"]) {
+        if (renderer?.[method]) editor[method] = data => renderer[method](element, data);
+        else delete editor[method];
+    }
     if (renderer) {
         const liveRoot = element.tagName === "IFRAME" ? element.contentDocument.body : element;
         if (element.tagName === "IFRAME" && element.contentDocument.documentElement.contentEditable !== "false")
@@ -90,7 +93,7 @@ function applyMode(element, value, settings, renderer, change) {
         }
         updateProjection(element, {
             ...change, string: value, previous: String(element.value ?? value)
-        }, renderer, editor.modeName !== settings.name || !editor.dom);
+        }, renderer, editor.modeKey !== settings.key || !editor.dom);
     } else if (editor.modeName === "text" && editor.init) {
         editor.inputValue = value;
         if (!isNative(element)) element.value = value;
@@ -124,8 +127,10 @@ function trackLoading(element, task, binding) {
         const current = getAttributes(element);
         const explicit = element.hasAttribute("editor") || element.hasAttribute("editor-language") ||
             element.hasAttribute("contenteditable");
-        const next = editorBinding(element, !!crdtBinding(element, current, explicit), current);
-        if (!element.__cocreateEditor && next !== binding) initElement(element);
+        const bound = !!crdtBinding(element, current, explicit);
+        const next = editorBinding(element, bound, current);
+        if (!element.__cocreateEditor && (next !== binding ||
+            editor.sourceBinding !== editorBinding(element, bound, current, false))) initElement(element);
     });
     editor.loading = loading;
     return loading;
@@ -197,14 +202,20 @@ export function initElement(element) {
     }
     if (editableHost && element.tagName !== "IFRAME" && !element.hasAttribute("contenteditable"))
         element.setAttribute("contenteditable", "true");
-    if (bound) element.setAttribute("crdt", "true");
+    if (bound && element.getAttribute("crdt") !== "true") element.setAttribute("crdt", "true");
     element.editor ||= {};
     const binding = editorBinding(element, bound, data);
+    const sourceBinding = editorBinding(element, bound, data, false);
     const settings = modeSettings(element);
     if (element.editor.loading) return element.editor.loading;
-    if (element.editor.init && element.editor.binding === binding && element.editor.modeKey === settings.key) return;
+    if (element.editor.init && element.editor.sourceBinding === sourceBinding) {
+        if (element.editor.modeKey !== settings.key) return refreshMode(element);
+        element.editor.binding = binding;
+        return;
+    }
     removeEventListeners(element);
     element.editor.binding = binding;
+    element.editor.sourceBinding = sourceBinding;
     const revision = element.editor.renderRevision = (element.editor.renderRevision || 0) + 1;
     element.editor.undo = () => updateText({ element, undoRedo: "undo" });
     element.editor.redo = () => updateText({ element, undoRedo: "redo" });
@@ -444,7 +455,8 @@ init();
 
 window.addEventListener("cocreate-editor-language-change", event => {
     const element = event.detail?.element;
-    if (element?.editor?.init && modeSettings(element).name === "code")
+    const settings = element && modeSettings(element);
+    if (element?.editor?.init && settings.name === "code" && element.editor.modeKey !== settings.key)
         refreshMode(element);
 });
 

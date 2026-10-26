@@ -17,10 +17,7 @@ export function sourceOffset(element, view, mapped, node, offset, end = false) {
     const visible = view.points.get(node)?.[offset];
     if (visible === undefined) return null;
     if (!mapped) return visible;
-    if (!mapped.spans.length) {
-        const dom = element.editor.dom;
-        return Number((dom.body || dom).dataset?.sourceContentStart || 0);
-    }
+    if (!mapped.spans.length) return 0;
     if (node.nodeType === 3 && offset > 0 && (end || offset === node.length))
         return sourceAt(mapped, visible, true);
     return sourceAt(mapped, visible, end);

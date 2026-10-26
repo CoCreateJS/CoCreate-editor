@@ -1,7 +1,9 @@
 import { getSelection, ownsFocus } from "./selection.js";
-import { invalidatePositionIndex, pointAtSource, reconcile } from "./editors/utilities/projection.js";
-import { reconcileMirror, syncMirrorNode } from "./editors/utilities/mirror.js";
-import { affectedPath, outermostChanges } from "./editors/utilities/affected.js";
+import { invalidatePositionIndex, pointAtSource } from "./editors/utilities/projection.js";
+import { replaceMirror } from "./editors/utilities/mirror.js";
+import { indexedSelection, applyIndexedDOM } from "./editors/utilities/indexedDOM.js";
+import { getLiveNode } from "./editors/utilities/nodeData.js";
+import { rebuildEditorDetails } from "./editors/utilities/details.js";
 
 function projectionRoot(tree) {
     return tree?.nodeType === 9 ? tree.body : tree;
@@ -45,7 +47,7 @@ function mapPosition(position, { start, length = 0, value = "" }) {
 }
 
 function selectionFor(element) {
-    return ownsFocus(element) ? getSelection(element) : null;
+    return ownsFocus(element) ? indexedSelection(element) || getSelection(element) : null;
 }
 
 function restoreSelection(detached, selection, change) {
@@ -54,25 +56,15 @@ function restoreSelection(detached, selection, change) {
     const head = mapPosition(selection.head, change);
     const [anchorNode, anchorOffset] = pointAtSource(detached, anchor);
     const [headNode, headOffset] = pointAtSource(detached, head);
-    const liveAnchor = anchorNode.liveNode;
-    const liveHead = headNode.liveNode;
+    const liveAnchor = getLiveNode(anchorNode);
+    const liveHead = getLiveNode(headNode);
     if (liveAnchor && liveHead)
         liveAnchor.ownerDocument.getSelection().setBaseAndExtent(liveAnchor, anchorOffset, liveHead, headOffset);
 }
 
-function applyToLive(root, live, path, changed) {
-    for (const node of outermostChanges(root, path, changed)) {
-        if (node === root || !node.liveNode || !live.contains(node.liveNode) ||
-            !syncMirrorNode(node)) {
-            reconcileMirror(root, live);
-            return;
-        }
-    }
-}
-
 // Each renderer supplies its syntax and tree shape; every update follows this lifecycle.
 export function updateProjection(element, change, {
-    render, root = projectionRoot, reconcile: reconcileTree = reconcile, prepareLive, afterMirror
+    render, root = projectionRoot, apply = applyIndexedDOM, prepareLive, afterMirror
 }, reset = false) {
     const { string } = change;
     change = normalizedChange(change);
@@ -80,16 +72,18 @@ export function updateProjection(element, change, {
     const detached = reset ? null : element.editor.dom;
     const previousRoot = root(detached, element);
     const staging = render(string, element, change, previousRoot);
-    const path = previousRoot ? affectedPath(previousRoot, change) : [];
-    const changed = new Set();
-    if (detached) reconcileTree(detached, staging, changed);
+    if (detached) apply(detached, staging, element, change);
     else element.editor.dom = staging;
 
     const stagedRoot = root(element.editor.dom, element);
     invalidatePositionIndex(stagedRoot);
     const live = element.tagName === "IFRAME" ? root(element.contentDocument, element) : element;
     prepareLive?.(live, element);
-    applyToLive(stagedRoot, live, path, changed);
+    invalidatePositionIndex(live);
+    if (!detached) {
+        replaceMirror(stagedRoot, live, element);
+        rebuildEditorDetails(element, stagedRoot);
+    }
     afterMirror?.(stagedRoot, live, element);
     restoreSelection(stagedRoot, selection, change);
     element.editor.inputValue = string;

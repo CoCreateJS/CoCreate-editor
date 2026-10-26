@@ -1,14 +1,32 @@
-import { getSourceRange } from "./ranges.js";
+import { getEditorDetails } from "./details.js";
 
 // Select the deepest rendered container whose content contains the old source
 // range. Crossing a child's tag leaves its parent as the safe update boundary.
-export function affectedPath(root, { start, length }) {
+export function affectedPath(root, { start, length }, editorElement) {
     const end = start + length;
+    const details = editorElement?.editor?.editorDetails;
+    if (details?.length) {
+        let low = 0, high = details.length;
+        while (low < high) {
+            const middle = (low + high) >>> 1;
+            if (details[middle].start <= start) low = middle + 1;
+            else high = middle;
+        }
+        const item = details[low - 1];
+        if (item) {
+            const path = [];
+            for (let current = item; current; current = current.parentDetails) {
+                if (current.contentStart <= start && end <= current.contentEnd)
+                    path.push(current.detachDOM);
+            }
+            if (path.at(-1) === root) return path;
+        }
+    }
     const path = [root];
     let current = root;
     while (true) {
         const child = [...current.children].find(node => {
-            const range = getSourceRange(node);
+            const range = getEditorDetails(node);
             return range && range.contentStart <= start && end <= range.contentEnd;
         });
         if (!child) return path;

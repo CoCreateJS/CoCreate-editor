@@ -1,11 +1,16 @@
+import { getParsedDetails } from "./indexedDOM.js";
 import { isBoundary, boundaryIdentity, boundaryFor } from "./boundaries.js";
-import { copySourceRange, getSourceRange } from "./ranges.js";
+import { copyEditorDetails, getEditorDetails } from "./details.js";
+import {
+    getMarkdownMap, getSourceMap, isPlaceholder, markPlaceholder,
+    setMarkdownMap, setSourceMap, unmarkPlaceholder
+} from "./nodeData.js";
 const positionIndexes = new WeakMap();
 
 function markdownBlockStart(node) {
     for (let current = node.nodeType === 1 ? node : node.parentElement;
         current; current = current.parentElement) {
-        const range = getSourceRange(current);
+        const range = getEditorDetails(current);
         if (range?.block) return range.start;
     }
     return 0;
@@ -13,21 +18,69 @@ function markdownBlockStart(node) {
 
 function depth(node) {
     let value = 0;
+    const details = getEditorDetails(node);
+    if (details) {
+        for (let item = details; item; item = item.parentDetails) value++;
+        return value;
+    }
     while (node) { value++; node = node.parentNode; }
     return value;
+}
+
+function domForDetails(details, root) {
+    const rootDetails = getEditorDetails(root);
+    if (rootDetails?.detachDOM === root) return details.detachDOM;
+    if (rootDetails?.liveDOM === root) return details.liveDOM;
+    const liveDOM = details.liveDOM;
+    return liveDOM && (liveDOM === root || root.contains?.(liveDOM))
+        ? liveDOM : details.detachDOM;
 }
 
 function positionIndex(root) {
     let index = positionIndexes.get(root);
     if (index) return index;
 
-    // Keep the exact editorPosition objects attached to the elements. Mutating a
-    // position then updates every consumer that holds a reference to it.
+    const rootDetails = getEditorDetails(root);
+    const owner = rootDetails?.editorElement;
+    if (getParsedDetails(owner?.editor?.dom).length) {
+        const records = owner.editor.editorDetails.filter(item => {
+            for (let current = item; current; current = current.parentDetails)
+                if (current === rootDetails) return true;
+            return false;
+        });
+        const elements = records.filter(item => item.detachDOM.nodeType === 1);
+        const boundaries = elements.filter(item => item.positionBoundary)
+            .sort((a, b) => a.end - b.end || depth(domForDetails(b, root)) - depth(domForDetails(a, root)));
+        const textPositions = [], textParents = new Set(), childOffsets = new Map(), counts = new Map();
+        let order = 0;
+        for (const item of records) {
+            const parent = item.parentDetails;
+            const count = counts.get(parent) || 0;
+            childOffsets.set(item, count);
+            counts.set(parent, count + 1);
+            if (item.detachDOM.nodeType !== 3) continue;
+            let nested = false;
+            for (let current = parent; current && current !== rootDetails; current = current.parentDetails)
+                if (isBoundary(current.detachDOM)) { nested = true; break; }
+            if (nested) continue;
+            const node = domForDetails(item, root), map = getSourceMap(item.detachDOM);
+            if (node.length) for (let current = parent; current; current = current.parentDetails) textParents.add(current);
+            if (map?.length) textPositions.push({ start: map[0][0], end: map.at(-1)[1],
+                node, offset: 0, map, order: order++ });
+        }
+        textPositions.sort((a, b) => a.start - b.start || a.order - b.order);
+        index = { elements, boundaries, textPositions, textParents, childOffsets };
+        positionIndexes.set(root, index);
+        return index;
+    }
+
+    // The live element and sorted editor index share each details object.
     const elements = [root, ...root.querySelectorAll("*")]
-        .map(getSourceRange)
+        .map(getEditorDetails)
         .filter(Boolean);
     const boundaries = elements.filter(range => range.positionBoundary)
-        .sort((a, b) => a.end - b.end || depth(b.element) - depth(a.element));
+        .sort((a, b) => a.end - b.end ||
+            depth(domForDetails(b, root)) - depth(domForDetails(a, root)));
     const textPositions = [];
     const walker = root.ownerDocument.createTreeWalker(
         root,
@@ -38,8 +91,8 @@ function positionIndex(root) {
         if (boundaryFor(node, root)) continue;
         const base = markdownBlockStart(node);
         for (let offset = 0; offset < node.length; offset++) {
-            const span = node._sourceMap?.[offset];
-            const markdownOffset = node._mdMap?.[offset];
+            const span = getSourceMap(node)?.[offset];
+            const markdownOffset = getMarkdownMap(node)?.[offset];
             const start = span ? span[0] : Number.isInteger(markdownOffset)
                 ? base + markdownOffset : null;
             if (start === null) continue;
@@ -61,8 +114,6 @@ function positionIndex(root) {
 export function invalidatePositionIndex(root) {
     positionIndexes.delete(root);
 }
-const presentationAttribute = name =>
-    name !== "data-editor-placeholder" && !/^data-(?:source|md)-/.test(name);
 // Read native editable DOM and retain coordinates for selection/source mapping.
 const blocks = new Set([
     "P",
@@ -100,12 +151,12 @@ export function project(root, source = "") {
             );
             append(
                 node.data,
-                node._sourceMap
-                    ? (i) => node._sourceMap[i]
-                    : node._mdMap
+            getSourceMap(node)
+                    ? (i) => getSourceMap(node)[i]
+                    : getMarkdownMap(node)
                       ? (i) => [
-                            base + node._mdMap[i],
-                            base + node._mdMap[i] + 1
+                            base + getMarkdownMap(node)[i],
+                            base + getMarkdownMap(node)[i] + 1
                         ]
                       : null
             );
@@ -113,7 +164,7 @@ export function project(root, source = "") {
         }
         if (
             node.nodeType !== 1 ||
-            node.hasAttribute("data-editor-placeholder") ||
+            isPlaceholder(node) ||
             node.tagName === "HEAD" ||
             node.tagName === "SCRIPT" ||
             node.tagName === "STYLE"
@@ -124,13 +175,13 @@ export function project(root, source = "") {
         if (
             node.nodeName === "BR" ||
             node.nodeName === "HR" ||
-            getSourceRange(node)?.void ||
+            getEditorDetails(node)?.void ||
             (node !== root && isBoundary(node))
         ) {
             append(
                 node.nodeName === "BR" ? "\n" : "\uFFFC",
-                getSourceRange(node)
-                    ? () => [getSourceRange(node).start, getSourceRange(node).end]
+                getEditorDetails(node)
+                    ? () => [getEditorDetails(node).start, getEditorDetails(node).end]
                     : null
             );
             return;
@@ -139,10 +190,10 @@ export function project(root, source = "") {
         for (const child of node.childNodes) {
             const placeholder =
                 child.nodeType === 1 &&
-                (child.hasAttribute("data-editor-placeholder") ||
+                (isPlaceholder(child) ||
                     (child.nodeName === "BR" &&
                         child === node.lastChild &&
-                    !getSourceRange(child)?.positionBoundary));
+                    !getEditorDetails(child)?.positionBoundary));
             if (placeholder) {
                 points.set(child, [text.length]);
                 offsets.push(text.length);
@@ -192,9 +243,11 @@ function key(node) {
 }
 function cloneMapped(node) {
     const clone = node.cloneNode(false);
-    copySourceRange(node, clone);
-    clone._mdMap = node._mdMap;
-    clone._sourceMap = node._sourceMap;
+    copyEditorDetails(node, clone);
+    setMarkdownMap(clone, getMarkdownMap(node));
+    setSourceMap(clone, getSourceMap(node));
+    if (isPlaceholder(node)) markPlaceholder(clone);
+    else unmarkPlaceholder(clone);
     for (const child of node.childNodes) clone.appendChild(cloneMapped(child));
     return clone;
 }
@@ -208,14 +261,16 @@ function patch(live, staged, changed) {
         changed?.add(parent);
         return;
     }
-    copySourceRange(staged, live);
+    if (isPlaceholder(staged)) markPlaceholder(live);
+    else unmarkPlaceholder(live);
+    copyEditorDetails(staged, live);
     if (live.nodeType === 3 || live.nodeType === 8) {
         if (live.data !== staged.data) {
             live.data = staged.data;
             changed?.add(live);
         }
-        live._mdMap = staged._mdMap;
-        live._sourceMap = staged._sourceMap;
+        setMarkdownMap(live, getMarkdownMap(staged));
+        setSourceMap(live, getSourceMap(staged));
         return;
     }
     const boundary =
@@ -238,7 +293,7 @@ function patch(live, staged, changed) {
     for (const attr of [...live.attributes])
         if (!owned.has(attr.name) && !staged.hasAttribute(attr.name)) {
             live.removeAttribute(attr.name);
-            if (presentationAttribute(attr.name)) changed?.add(live);
+            changed?.add(live);
         }
     for (const attr of staged.attributes)
         if (
@@ -246,7 +301,7 @@ function patch(live, staged, changed) {
             live.getAttribute(attr.name) !== attr.value
         ) {
             live.setAttribute(attr.name, attr.value);
-            if (presentationAttribute(attr.name)) changed?.add(live);
+            changed?.add(live);
         }
     if (owned.has("class")) {
         const previous = new Set(
@@ -267,7 +322,7 @@ function patch(live, staged, changed) {
     if (!boundary) reconcile(live, staged, changed);
 }
 export function reconcile(live, staged, changed) {
-    copySourceRange(staged, live);
+    copyEditorDetails(staged, live);
     const old = [...live.childNodes],
         next = [...staged.childNodes];
     let prefix = 0,
@@ -318,22 +373,23 @@ export function pointAtSource(root, position) {
     let boundary;
     for (let i = low; i < index.boundaries.length &&
         index.boundaries[i].end === position; i++)
-        if (!boundary || depth(index.boundaries[i].element) > depth(boundary.element))
+        if (!boundary || depth(domForDetails(index.boundaries[i], root)) >
+            depth(domForDetails(boundary, root)))
             boundary = index.boundaries[i];
     if (boundary) {
-        const node = boundary.element;
-        return [node.parentNode, [...node.parentNode.childNodes].indexOf(node) + 1];
+        const node = domForDetails(boundary, root);
+        return [node.parentNode, (index.childOffsets?.get(boundary) ?? [...node.parentNode.childNodes].indexOf(node)) + 1];
     }
 
     let empty;
     for (const range of index.elements) {
-        const node = range.element;
-        if (!node.textContent && !range.void &&
+        const node = domForDetails(range, root);
+        if ((index.textParents ? !index.textParents.has(range) : !node.textContent) && !range.void &&
             range.contentStart <= position && position <= range.contentEnd &&
             (!empty || range.contentEnd - range.contentStart <
                 empty.contentEnd - empty.contentStart)) empty = range;
     }
-    if (empty) return [empty.element, 0];
+    if (empty) return [domForDetails(empty, root), 0];
     low = 0;
     high = index.textPositions.length;
     while (low < high) {
@@ -344,6 +400,18 @@ export function pointAtSource(root, position) {
     const next = index.textPositions[low];
     if (next?.start === position) return [next.node, next.offset];
     const previous = index.textPositions[low - 1];
+    if (previous?.map) {
+        const map = previous.map;
+        let from = 0, to = map.length;
+        while (from < to) {
+            const middle = (from + to) >>> 1;
+            if (map[middle][0] < position) from = middle + 1;
+            else to = middle;
+        }
+        if (map[from]?.[0] === position) return [previous.node, from];
+        const offset = Math.max(0, from - 1);
+        return [previous.node, position < map[offset][1] ? offset : offset + 1];
+    }
     if (previous && position < previous.end)
         return [previous.node, previous.offset];
     if (previous) return [previous.node, previous.offset + 1];

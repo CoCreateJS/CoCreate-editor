@@ -1,4 +1,4 @@
-import { copySourceRange } from "./ranges.js";
+import { copyEditorDetails } from "./details.js";
 import { reconcile } from "./projection.js";
 
 const owned = new Set([
@@ -15,7 +15,7 @@ const owned = new Set([
 export function reconcileDocument(live, staged, changed) {
     const root = live.documentElement;
     const next = staged.documentElement;
-    copySourceRange(next, root);
+    copyEditorDetails(next, root);
     for (const attr of [...root.attributes])
         if (!owned.has(attr.name) && attr.name !== "class" && !next.hasAttribute(attr.name)) {
             root.removeAttribute(attr.name);
