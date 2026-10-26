@@ -1,7 +1,7 @@
 import { attachEditorDetails, getEditorDetails, rebuildEditorDetails } from "./details.js";
 import {
-    getLiveNode, getMarkdownMap, getSourceMap, isPlaceholder,
-    markPlaceholder, setLiveNode, setMarkdownMap, setSourceMap, unmarkPlaceholder
+    getLiveNode, getSourceMap, isPlaceholder,
+    markPlaceholder, setLiveNode, setSourceMap, unmarkPlaceholder
 } from "./nodeData.js";
 
 function createLiveNode(detached, doc) {
@@ -32,7 +32,6 @@ function syncNode(detached, live, editorElement) {
     if (detached.nodeType === 3 || detached.nodeType === 8) {
         if (live.data !== detached.data) live.data = detached.data;
         setSourceMap(live, getSourceMap(detached));
-        setMarkdownMap(live, getMarkdownMap(detached));
         return;
     }
     if (isPlaceholder(detached)) markPlaceholder(live);
@@ -57,14 +56,6 @@ function syncChildren(detached, live, editorElement) {
         cursor.remove();
         cursor = next;
     }
-}
-
-export function syncMirrorNode(detached) {
-    const live = getLiveNode(detached);
-    if (!live || !live.isConnected) return false;
-    const editorElement = getEditorDetails(detached)?.editorElement;
-    syncNode(detached, live, editorElement);
-    return true;
 }
 
 export function reconcileMirror(detached, live, editorElement = getEditorDetails(detached)?.editorElement,
@@ -101,7 +92,6 @@ export function replaceMirror(detached, live, editorElement) {
         attachEditorDetails(source, target, editorElement);
         if (source.nodeType === 3 || source.nodeType === 8) {
             setSourceMap(target, getSourceMap(source));
-            setMarkdownMap(target, getMarkdownMap(source));
         } else {
             for (const attribute of source.attributes) target.setAttribute(attribute.name, attribute.value);
             if (isPlaceholder(source)) markPlaceholder(target);

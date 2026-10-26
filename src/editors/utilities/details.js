@@ -119,53 +119,9 @@ function upperBound(details, start) {
     return low;
 }
 
-export function replaceEditorDetailsSubtree(editorElement, detachDOM, previousRange) {
-    const index = editorElement?.editor?.editorDetails;
-    const rootDetails = getEditorDetails(detachDOM);
-    if (!index || !rootDetails || rootDetails.editorElement !== editorElement)
-        return rebuildEditorDetails(editorElement, detachDOM);
-
-    const start = Math.min(previousRange?.start ?? rootDetails.start, rootDetails.start);
-    const end = Math.max(previousRange?.end ?? rootDetails.end, rootDetails.end);
-    const from = lowerBound(index, start);
-    const to = upperBound(index, end);
-    const retained = index.slice(from, to).filter(item =>
-        !(item.detachDOM === detachDOM || detachDOM.contains(item.detachDOM))
-    );
-    const first = detachDOM.nodeType === 9 ? detachDOM.documentElement : detachDOM;
-    const replacement = [];
-    const parentDetails = rootDetails.parentDetails;
-    const visit = (node, parent) => {
-        let nextParent = parent;
-        const item = getEditorDetails(node);
-        if (item && item.editorElement === editorElement && item.liveDOM?.editorDetails === item) {
-            item.parentDetails = parent;
-            replacement.push(item);
-            nextParent = item;
-        }
-        for (const child of node.childNodes || []) visit(child, nextParent);
-    };
-    if (first) visit(first, parentDetails);
-
-    const merged = [];
-    let left = 0, right = 0;
-    while (left < retained.length && right < replacement.length)
-        merged.push(compareDetails(retained[left], replacement[right]) <= 0
-            ? retained[left++] : replacement[right++]);
-    merged.push(...retained.slice(left), ...replacement.slice(right));
-    index.splice(from, to - from, ...merged);
-    return index;
-}
-
 export function findEditorDetailsByStart(editorElement, start) {
     const details = editorElement?.editor?.editorDetails || [];
-    let low = 0;
-    let high = details.length;
-    while (low < high) {
-        const middle = (low + high) >>> 1;
-        if (details[middle].start < start) low = middle + 1;
-        else high = middle;
-    }
+    const low = lowerBound(details, start);
     let found;
     for (let i = low; i < details.length && details[i].start === start; i++) {
         if (!found || details[i].end - details[i].start < found.end - found.start)

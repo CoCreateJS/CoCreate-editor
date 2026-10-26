@@ -1,4 +1,5 @@
 import { boundaryFor, boundarySelector, getSelection, isNative, project } from "../selection.js";
+import { textChange } from "../textChange.js";
 
 // Apply CRDT's canonical text silently, preserving the current selection.
 export function updateTextElement(element, string, change) {
@@ -16,8 +17,10 @@ export function updateTextElement(element, string, change) {
         after = start + (change.value?.length || 0);
     } else {
         // Reconcile browser-applied edits against CRDT's canonical string if needed.
-        while (start < end && start < after && before[start] === string[start]) start++;
-        while (end > start && after > start && before[end - 1] === string[after - 1]) { end--; after--; }
+        const diff = textChange(before, string);
+        start = diff.start;
+        end = start + diff.length;
+        after = start + diff.value.length;
     }
     const value = string.slice(start, after);
     const position = offset => offset < start ? offset : offset >= end

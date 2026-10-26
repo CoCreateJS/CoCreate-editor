@@ -104,7 +104,7 @@ export function planIndexedDOM(detached, staging, element, change) {
         candidates.get(key).push(item);
     }
     const chosen = new Map(), retained = new Set(), updates = [], added = [];
-    const children = new Map();
+    const children = new Map(), childOrder = new Map();
     const opaqueParsed = new Set(), opaqueDetails = new Set();
     for (const parsed of next) {
         if (opaqueParsed.has(parsed.parentDetails)) {
@@ -136,8 +136,12 @@ export function planIndexedDOM(detached, staging, element, change) {
         if (parent && !(region && parsed === newRoot)) {
             if (!children.has(parent)) children.set(parent, []);
             children.get(parent).push(details);
+            if (Number.isInteger(parsed.childIndex)) childOrder.set(details, parsed.childIndex);
         }
     }
+    for (const items of children.values())
+        if (items.some(item => childOrder.has(item)))
+            items.sort((a, b) => childOrder.get(a) - childOrder.get(b));
 
     const discarded = old.filter(item => !retained.has(item));
     const protectedRecords = new Set(opaqueDetails), removed = [];
@@ -175,7 +179,8 @@ export function applyDOMUpdatePlan(plan) {
         else if (node.nodeType === 1) node.replaceChildren();
         details.parentDetails = parent || null;
         if (node.nodeType === 1) {
-            if (previous) syncAttributes(node, details.detachDOM, !region && details === oldRoot);
+            if (previous && node !== details.detachDOM)
+                syncAttributes(node, details.detachDOM, !region && details === oldRoot);
             if (region || details !== oldRoot || (documentTree && element.tagName === "IFRAME"))
                 syncAttributes(node, live, !region && details === oldRoot);
             for (const target of [details.detachDOM, live])
@@ -276,9 +281,10 @@ export function indexedSelection(element) {
             if (offset >= map.length || (end && offset > 0)) return map[Math.min(offset, map.length) - 1][1];
             return map[offset][0];
         }
-        const children = element.editor.editorDetails.filter(item => item.parentDetails === details);
         if (!offset) return details.contentStart;
-        return children[offset - 1]?.end ?? details.contentEnd;
+        const children = element.editor.editorDetails.filter(item => item.parentDetails === details);
+        const previous = children.find((item, index) => (item.childIndex ?? index) === offset - 1);
+        return previous?.end ?? details.contentEnd;
     };
     let anchor = point(selection.anchorNode, selection.anchorOffset, false);
     let head = point(selection.focusNode, selection.focusOffset, false);

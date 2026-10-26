@@ -2,19 +2,10 @@ import { getParsedDetails } from "./indexedDOM.js";
 import { isBoundary, boundaryIdentity, boundaryFor } from "./boundaries.js";
 import { copyEditorDetails, getEditorDetails } from "./details.js";
 import {
-    getMarkdownMap, getSourceMap, isPlaceholder, markPlaceholder,
-    setMarkdownMap, setSourceMap, unmarkPlaceholder
+    getSourceMap, isPlaceholder, markPlaceholder,
+    setSourceMap, unmarkPlaceholder
 } from "./nodeData.js";
 const positionIndexes = new WeakMap();
-
-function markdownBlockStart(node) {
-    for (let current = node.nodeType === 1 ? node : node.parentElement;
-        current; current = current.parentElement) {
-        const range = getEditorDetails(current);
-        if (range?.block) return range.start;
-    }
-    return 0;
-}
 
 function depth(node) {
     let value = 0;
@@ -56,7 +47,7 @@ function positionIndex(root) {
         for (const item of records) {
             const parent = item.parentDetails;
             const count = counts.get(parent) || 0;
-            childOffsets.set(item, count);
+            childOffsets.set(item, item.childIndex ?? count);
             counts.set(parent, count + 1);
             if (item.detachDOM.nodeType !== 3) continue;
             let nested = false;
@@ -89,16 +80,12 @@ function positionIndex(root) {
     let node, order = 0;
     while ((node = walker.nextNode())) {
         if (boundaryFor(node, root)) continue;
-        const base = markdownBlockStart(node);
         for (let offset = 0; offset < node.length; offset++) {
             const span = getSourceMap(node)?.[offset];
-            const markdownOffset = getMarkdownMap(node)?.[offset];
-            const start = span ? span[0] : Number.isInteger(markdownOffset)
-                ? base + markdownOffset : null;
-            if (start === null) continue;
+            if (!span) continue;
             textPositions.push({
-                start,
-                end: span ? span[1] : start + 1,
+                start: span[0],
+                end: span[1],
                 node,
                 offset,
                 order: order++
@@ -143,23 +130,13 @@ export function project(root, source = "") {
     }
     function walk(node) {
         if (node.nodeType === 3) {
-            const base = markdownBlockStart(node);
             const start = text.length;
             points.set(
                 node,
                 Array.from({ length: node.length + 1 }, (_, i) => start + i)
             );
-            append(
-                node.data,
-            getSourceMap(node)
-                    ? (i) => getSourceMap(node)[i]
-                    : getMarkdownMap(node)
-                      ? (i) => [
-                            base + getMarkdownMap(node)[i],
-                            base + getMarkdownMap(node)[i] + 1
-                        ]
-                      : null
-            );
+            const map = getSourceMap(node);
+            append(node.data, map ? i => map[i] : null);
             return;
         }
         if (
@@ -244,7 +221,6 @@ function key(node) {
 function cloneMapped(node) {
     const clone = node.cloneNode(false);
     copyEditorDetails(node, clone);
-    setMarkdownMap(clone, getMarkdownMap(node));
     setSourceMap(clone, getSourceMap(node));
     if (isPlaceholder(node)) markPlaceholder(clone);
     else unmarkPlaceholder(clone);
@@ -269,7 +245,6 @@ function patch(live, staged, changed) {
             live.data = staged.data;
             changed?.add(live);
         }
-        setMarkdownMap(live, getMarkdownMap(staged));
         setSourceMap(live, getSourceMap(staged));
         return;
     }

@@ -4,20 +4,11 @@ import { replaceMirror } from "./editors/utilities/mirror.js";
 import { indexedSelection, applyIndexedDOM } from "./editors/utilities/indexedDOM.js";
 import { getLiveNode } from "./editors/utilities/nodeData.js";
 import { rebuildEditorDetails } from "./editors/utilities/details.js";
+import { textChange } from "./textChange.js";
 
 function projectionRoot(tree) {
     return tree?.nodeType === 9 ? tree.body : tree;
 }
-function sourceChange(previous, string) {
-    let start = 0;
-    while (start < previous.length && start < string.length && previous[start] === string[start]) start++;
-    let oldEnd = previous.length, newEnd = string.length;
-    while (oldEnd > start && newEnd > start && previous[oldEnd - 1] === string[newEnd - 1]) {
-        oldEnd--; newEnd--;
-    }
-    return { start, length: oldEnd - start, value: string.slice(start, newEnd) };
-}
-
 function normalizedChange(change) {
     const { previous, string, start, length, value, operation } = change;
     const sameOperation = typeof previous === "string" && !!operation && operation.start === start &&
@@ -37,7 +28,7 @@ function normalizedChange(change) {
         previous.slice(0, start) + value + previous.slice(start + length) === string
     ) return change;
 
-    return { ...change, ...sourceChange(String(previous ?? ""), string) };
+    return { ...change, ...textChange(String(previous ?? ""), string) };
 }
 
 function mapPosition(position, { start, length = 0, value = "" }) {

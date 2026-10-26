@@ -893,6 +893,26 @@ test('indexed DOM document plans synchronize doctypes and synthetic equal-start 
     }), true);
 }));
 
+test('iframe document plans preserve head and body order when synthetic containers share a source start', () => fixture(async page => {
+    assert.equal(await page.evaluate(() => {
+        for (const initial of ['<p>A</p>', '<html><body><p>A</p></body></html>', '<body><p>A</p></body>']) {
+            const frame = document.createElement('iframe');
+            document.body.append(frame);
+            frame.value = initial;
+            frame.editor = {};
+            frame.editor.dom = createDOM(initial, document, frame.contentDocument.documentElement);
+            const next = initial.replace('<p>', '<p title="updated">');
+            updateDOM(frame, { previous: initial, string: next });
+            const fresh = createDOM(next, document);
+            check(frame.contentDocument.documentElement.innerHTML === fresh.documentElement.innerHTML,
+                'The live document must preserve head before body');
+            check(frame.editor.dom.documentElement.innerHTML === fresh.documentElement.innerHTML,
+                'The detached document must preserve head before body');
+        }
+        return true;
+    }), true);
+}));
+
 
 test('indexed DOM consumes native mutation references without leaving duplicate or moved nodes', () => fixture(async page => {
     assert.equal(await page.evaluate(async () => {
@@ -1198,6 +1218,41 @@ test('attribute setters submit precise source edits and preserve formatting and 
         check(!target.hasAttribute('title') && details.getAttribute('title') === null, 'Removal must update both source and live DOM');
         check(target.editorDetails === details && element.editor.editorDetails.includes(details), 'Attribute edits must preserve the shared details object and its methods');
         paired(element.editor.dom.body);
+        return true;
+    }), true);
+}));
+
+test('shared source differences and attribute operations preserve complete Unicode characters', () => fixture(async page => {
+    assert.equal(await page.evaluate(async () => {
+        const { textChange } = await import('/textChange.js');
+        const splitsPair = (text, position) => position > 0 &&
+            /[\uD800-\uDBFF]/.test(text[position - 1]) && /[\uDC00-\uDFFF]/.test(text[position] || '');
+        for (const [before, after] of [
+            ['a😀z', 'a😁z'], ['a😀z', 'a🨀z'], ['a😀z', 'az'],
+            ['az', 'a😀z'], ['same', 'same'], ['', '😀'], ['😀', '']
+        ]) {
+            const change = textChange(before, after), end = change.start + change.length;
+            check(before.slice(0, change.start) + change.value + before.slice(end) === after,
+                'The shared difference must reconstruct the source exactly');
+            check(!splitsPair(before, change.start) && !splitsPair(before, end) &&
+                !splitsPair(after, change.start) && !splitsPair(after, change.start + change.value.length),
+                'Minimal differences must keep surrogate pairs intact on both sides');
+        }
+        const api = await import('/index.js');
+        const element = document.createElement('div');
+        element.setAttribute('editor', 'dom');
+        element.setAttribute('crdt', 'false');
+        element.value = '<p title="a😀z"></p>';
+        document.body.append(element);
+        await api.initElement(element);
+        const details = element.firstChild.editorDetails, operationStart = details.getAttribute('title').valueStart + 1;
+        const update = element.editor.updateText, operations = [];
+        element.editor.updateText = change => { operations.push(change); return update(change); };
+        await details.setAttribute('title', 'a😁z');
+        check(operations[0].start === operationStart && operations[0].length === 2 && operations[0].value === '😁',
+            'Attribute setters must submit a complete character instead of half a surrogate pair');
+        check(element.firstChild.title === 'a😁z' && details.getAttribute('title').value === 'a😁z',
+            'The canonical source and rendered attribute must agree');
         return true;
     }), true);
 }));

@@ -1,4 +1,5 @@
 import { boundaryFor, getSelection, isNative, project, sourceAt, sourceProjection, surface } from "./selection.js";
+import { textChange } from "./textChange.js";
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const words = new Intl.Segmenter(undefined, { granularity: "word" });
@@ -14,13 +15,8 @@ function difference(before, after, selection) {
             before.slice(end) === after.slice(start + length))
             return { start, end, value: after.slice(start, start + length) };
     }
-    let start = 0, end = before.length, tail = after.length;
-    while (start < end && start < tail && before[start] === after[start]) start++;
-    while (end > start && tail > start && before[end - 1] === after[tail - 1]) { end--; tail--; }
-    // Never split a surrogate pair when finding a minimal replacement.
-    if (start > 0 && /[\uDC00-\uDFFF]/.test(before[start] || after[start] || "")) start--;
-    if (/[\uDC00-\uDFFF]/.test(before[end] || after[tail] || "")) { end++; tail++; }
-    return { start, end, value: after.slice(start, tail) };
+    const { start, length, value } = textChange(before, after);
+    return { start, end: start + length, value };
 }
 
 function deletion(value, start, end, type) {

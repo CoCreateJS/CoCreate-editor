@@ -556,6 +556,14 @@ export default function createDOM(source, ownerDocument = document, liveRoot, li
         if (!records.includes(item)) records.push(item);
     }
     for (const item of records) item.parentDetails = getEditorDetails(item.detachDOM.parentNode) || null;
+    // Synthetic head/body ranges may share a source start. Source order alone
+    // cannot describe their actual child order in the document element.
+    let childIndex = 0;
+    for (const node of staged.documentElement.childNodes) {
+        const item = getEditorDetails(node);
+        if (item) item.childIndex = childIndex;
+        childIndex++;
+    }
     setParsedDetails(staged, records);
     if (liveRoot) {
         const iframeDocument = liveRoot === liveRoot.ownerDocument.documentElement;

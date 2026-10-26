@@ -1,4 +1,5 @@
 import { editorDetailsPrototype } from "./details.js";
+import { textChange } from "../../textChange.js";
 
 const validName = /^[A-Za-z_:][\w:.-]*$/;
 
@@ -93,13 +94,10 @@ function matching(attributes, name) {
 }
 
 function submit(details, source, start, end, value) {
-    const previous = source.slice(start, end);
-    let from = 0, oldEnd = previous.length, newEnd = value.length;
-    while (from < oldEnd && from < newEnd && previous[from] === value[from]) from++;
-    while (oldEnd > from && newEnd > from && previous[oldEnd - 1] === value[newEnd - 1]) { oldEnd--; newEnd--; }
-    if (from === oldEnd && from === newEnd) return;
+    const change = textChange(source.slice(start, end), value);
+    if (!change.length && !change.value) return;
     return details.editorElement.editor.updateText({
-        start: start + from, length: oldEnd - from, value: value.slice(from, newEnd)
+        ...change, start: start + change.start
     });
 }
 
