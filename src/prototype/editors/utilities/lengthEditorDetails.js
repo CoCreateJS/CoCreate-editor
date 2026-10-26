@@ -72,7 +72,12 @@ export function planDetailsEdit(details, start, end, value = "") {
     }
 
     if (start === end) {
-        const containing = ranges.find(range => range.start <= start && start < range.end);
+        let containing = ranges.find(range => range.start <= start && start < range.end);
+        const textEndingAtPosition = ranges.find(range =>
+            range.detail.kind === "text" && range.end === start);
+        if (textEndingAtPosition) containing = textEndingAtPosition;
+        else if (!containing)
+            containing = ranges.find(range => range.detail.kind === "text" && range.start === start);
         if (containing && value) {
             const local = start - containing.start;
             edited.push({

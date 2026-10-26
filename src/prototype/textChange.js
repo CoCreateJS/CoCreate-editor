@@ -1,5 +1,12 @@
 // Minimal replacement in UTF-16 source coordinates.
-export function textChange(before, after) {
+export function textChange(before, after, selection) {
+    if (selection && Number.isInteger(selection.start) && Number.isInteger(selection.end)) {
+        const { start, end } = selection;
+        const insertedLength = after.length - before.length + end - start;
+        if (insertedLength >= 0 && before.slice(0, start) === after.slice(0, start) &&
+            before.slice(end) === after.slice(start + insertedLength))
+            return { start, length: end - start, value: after.slice(start, start + insertedLength) };
+    }
     let start = 0, oldEnd = before.length, newEnd = after.length;
     while (start < oldEnd && start < newEnd && before[start] === after[start]) start++;
     while (oldEnd > start && newEnd > start && before[oldEnd - 1] === after[newEnd - 1]) {

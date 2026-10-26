@@ -6,6 +6,9 @@
  * exactly one segment, so joining `value` fields reproduces the input.
  * `parentDetails` links lexical segments to the nearest open element record;
  * those references are local derived state, not shared DOM references.
+ * Text content stays in contiguous runs. Whitespace inside an opening tag is
+ * also a text detail, marked `sourceOnly`: it contributes length but has no
+ * live Text node. Tag endings use the same source-only convention.
  *
  * This scanner preserves source, including malformed or incomplete markup. It
  * is intentionally a tokenizer rather than a browser HTML tree builder: browser
@@ -23,18 +26,23 @@ const nameStart = /[A-Za-z]/;
 const nameCharacter = /[A-Za-z0-9:_-]/;
 const whitespace = /[\t\n\f\r ]/;
 
+export const isVoidElement = tag => voidElements.has(tag);
+
 function createRecordFactory(collection) {
-    return (kind, value, parentDetails, extra = {}) => collection.add({
+    const record = (kind, value, parentDetails, extra = {}) => collection.add({
         kind,
-        nodeType: kind === "element" || kind === "elementEnd" ? 1
+        nodeType: kind === "element" ? 1
             : kind === "attribute" ? 2
-                : kind === "text" || kind === "whitespace" || kind === "tab" || kind === "lineBreak" ? 3
+                : kind === "text" ? 3
                     : kind === "comment" ? 8
                     : null,
+        ...(kind === "markup" || kind === "elementEnd" ? { sourceOnly: true } : {}),
         value,
         parentDetails: parentDetails || null,
         ...extra
     });
+    record.details = collection.details;
+    return record;
 }
 
 function readName(source, start) {
@@ -44,21 +52,23 @@ function readName(source, start) {
     return end;
 }
 
-function readTagEnd(source, start) {
+function readTagEnd(source, start, stopAtTagStart = false) {
     let quote = "";
     for (let index = start; index < source.length; index++) {
         const character = source[index];
         if (quote) {
             if (character === quote) quote = "";
         } else if (character === "\"" || character === "'") quote = character;
-        else if (character === ">") return index;
+        else if (character === ">") return { end: index, next: index + 1 };
+        else if (stopAtTagStart && character === "<") return { end: -1, next: index };
     }
-    return -1;
+    return { end: -1, next: source.length };
 }
 
 function readAttributeEnd(source, start, limit) {
     let index = start;
-    while (index < limit && !whitespace.test(source[index]) && source[index] !== "=" && source[index] !== ">") index++;
+    while (index < limit && !whitespace.test(source[index]) &&
+        source[index] !== "=" && source[index] !== ">" && source[index] !== "/") index++;
     if (index === start) return Math.min(start + 1, limit);
 
     const nameEnd = index;
@@ -78,22 +88,13 @@ function readAttributeEnd(source, start, limit) {
 }
 
 function pushText(record, source, start, end, parentDetails) {
-    let index = start;
-    while (index < end) {
-        if (whitespace.test(source[index])) {
-            const character = source[index];
-            const kind = character === "\t" ? "tab"
-                : character === "\n" || character === "\r" ? "lineBreak"
-                    : "whitespace";
-            record(kind, character, parentDetails);
-            index++;
-            continue;
-        }
-        let next = index + 1;
-        while (next < end && !whitespace.test(source[next])) next++;
-        record("text", source.slice(index, next), parentDetails);
-        index = next;
-    }
+    if (end <= start) return;
+    const value = source.slice(start, end);
+    const previous = record.details.at(-1);
+    if (previous?.kind === "text" && !previous.sourceOnly && previous.parentDetails === parentDetails) {
+        previous.value += value;
+        previous.length = previous.value.length;
+    } else record("text", value, parentDetails);
 }
 
 function pushRawMarkup(record, source, start, end, parentDetails, kind = "markup", complete = true) {
@@ -143,7 +144,7 @@ export function parseDOM(source, editor = null) {
         }
 
         if (source.startsWith("<!", index) || source.startsWith("<?", index)) {
-            const endAt = readTagEnd(source, index + 2);
+            const { end: endAt } = readTagEnd(source, index + 2);
             const end = endAt < 0 ? source.length : endAt + 1;
             pushRawMarkup(record, source, index, end, parent(), "markup", endAt >= 0);
             index = end;
@@ -155,47 +156,53 @@ export function parseDOM(source, editor = null) {
         const nameEnd = readName(source, nameStartIndex);
         if (nameEnd === nameStartIndex) {
             // A literal less-than sign or incomplete `<` remains source text.
-            let end = index + 1;
-            while (end < source.length && source[end] !== "<" && !whitespace.test(source[end])) end++;
+            let end = source.indexOf("<", index + 1);
+            if (end < 0) end = source.length;
             pushText(record, source, index, end, parent());
             index = end;
             continue;
         }
 
         const tag = source.slice(nameStartIndex, nameEnd).toLowerCase();
-        const tagEnd = readTagEnd(source, nameEnd);
-        const limit = tagEnd < 0 ? source.length : tagEnd;
+        const { end: tagEnd, next } = readTagEnd(source, nameEnd, true);
+        if (tagEnd < 0) {
+            pushText(record, source, index, next, parent());
+            index = next;
+            continue;
+        }
+        const limit = tagEnd;
 
         if (closing) {
-            const matching = [...openElements].reverse().find(item => item.tag === tag) || null;
-            const closeEnd = tagEnd < 0 ? source.length : tagEnd + 1;
+            let matchingIndex = openElements.length - 1;
+            while (matchingIndex >= 0 && openElements[matchingIndex].tag !== tag) matchingIndex--;
+            const matching = openElements[matchingIndex];
+            const closeEnd = tagEnd + 1;
             record("elementEnd", source.slice(index, closeEnd), matching || parent(), {
                 tag,
-                complete: tagEnd >= 0
+                complete: true
             });
-            if (matching) openElements.splice(openElements.indexOf(matching));
+            if (matching) openElements.length = matchingIndex;
             index = closeEnd;
             continue;
         }
 
         const element = record("element", source.slice(index, nameEnd), parent(), {
             tag,
-            complete: tagEnd >= 0,
+            complete: true,
             selfClosing: false
         });
 
         let cursor = nameEnd;
+        let endingStart = tagEnd;
         while (cursor < limit) {
             if (whitespace.test(source[cursor])) {
-                const character = source[cursor++];
-                const kind = character === "\t" ? "tab"
-                    : character === "\n" || character === "\r" ? "lineBreak"
-                        : "whitespace";
-                record(kind, character, element);
+                const start = cursor;
+                while (cursor < limit && whitespace.test(source[cursor])) cursor++;
+                record("text", source.slice(start, cursor), element, { sourceOnly: true });
                 continue;
             }
             if (source[cursor] === "/" && cursor + 1 === limit) {
-                record("delimiter", source.slice(cursor, cursor + 1), element);
+                endingStart = cursor;
                 element.selfClosing = true;
                 cursor++;
                 continue;
@@ -214,15 +221,11 @@ export function parseDOM(source, editor = null) {
             cursor = attributeEnd;
         }
 
-        if (tagEnd >= 0) {
-            const delimiter = source.slice(tagEnd, tagEnd + 1);
-            record("delimiter", delimiter, element);
-            index = tagEnd + 1;
-        } else {
-            index = source.length;
-        }
+        // The closing angle is source data, with no live node of its own.
+        record("markup", source.slice(endingStart, tagEnd + 1), element);
+        index = tagEnd + 1;
 
-        if (!element.selfClosing && !voidElements.has(tag) && tagEnd >= 0)
+        if (!element.selfClosing && !voidElements.has(tag))
             openElements.push(element);
     }
 

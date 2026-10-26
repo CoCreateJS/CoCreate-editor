@@ -23,4 +23,35 @@ export function getSelection(element) {
     };
 }
 
+export function setSelection(element, { start, end = start } = {}) {
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start)
+        return false;
+    if (typeof element?.setSelectionRange === "function") {
+        element.setSelectionRange(start, end);
+        return true;
+    }
+    const root = element?.editor?.liveDOM || element;
+    const doc = root?.ownerDocument;
+    if (!doc?.createTreeWalker || !doc.getSelection) return false;
+    const point = offset => {
+        const walker = doc.createTreeWalker(root, 4);
+        let node;
+        while ((node = walker.nextNode())) {
+            if (offset <= node.data.length) return [node, offset];
+            offset -= node.data.length;
+        }
+        const last = root.lastChild;
+        return last?.nodeType === 3 ? [last, last.data.length] : [root, root.childNodes.length];
+    };
+    const [startNode, startOffset] = point(start);
+    const [endNode, endOffset] = point(end);
+    const range = doc.createRange();
+    range.setStart(startNode, startOffset);
+    range.setEnd(endNode, endOffset);
+    const selection = doc.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return true;
+}
+
 export default getSelection;

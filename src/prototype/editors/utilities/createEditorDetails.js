@@ -13,6 +13,13 @@ const detailsByLiveDOM = new WeakMap();
 
 const validAttributeName = /^[A-Za-z_:][\w:.-]*$/;
 
+function submitUpdate(detail, update) {
+    const editor = detail.editor?.editor || detail.editor;
+    if (typeof editor?.updateText !== "function")
+        throw new Error("The editor element does not expose editor.updateText().");
+    return editor.updateText(update);
+}
+
 function attributeDetail(elementDetails, name, nativeAttribute) {
     if (typeof name !== "string" || !validAttributeName.test(name))
         throw new TypeError("Attribute operations require a valid HTML attribute name.");
@@ -48,10 +55,7 @@ Object.assign(editorDetailsPrototype, {
         if (!Number.isInteger(start) || !Number.isInteger(length) || start < 0 || length < 0 ||
             start + length > this.length || typeof value !== "string")
             throw new RangeError("Detail update must be a valid range within this value and include a string value.");
-        const editor = this.editor?.editor || this.editor;
-        if (typeof editor?.updateText !== "function")
-            throw new Error("The editor element does not expose editor.updateText().");
-        return editor.updateText({ start: this.getStart() + start, length, value });
+        return submitUpdate(this, { start: this.getStart() + start, length, value });
     },
     setValue(value) {
         return this.updateText({ start: 0, length: this.length, value });
@@ -94,6 +98,16 @@ Object.assign(elementEditorDetailsPrototype, {
         if (!nativeAttribute) return;
         const detail = attributeDetail(this, name, nativeAttribute);
         if (!detail) throw new Error(`No editor detail is attached to attribute "${name}".`);
+        const collection = collectionsByDetail.get(this);
+        const matching = collection?.filter(item => item.kind === "attribute" &&
+            item.parentDetails === this && item.name.toLowerCase() === name.toLowerCase());
+        if (matching?.length > 1) {
+            const first = matching[0], last = matching.at(-1), unwanted = new Set(matching);
+            const between = collection.slice(collection.indexOf(first), collection.indexOf(last) + 1);
+            return submitUpdate(this, { start: first.getStart(),
+                length: between.reduce((length, item) => length + item.length, 0),
+                value: between.filter(item => !unwanted.has(item)).map(item => item.value).join("") });
+        }
         return detail.remove();
     }
 });
@@ -197,6 +211,7 @@ export function createEditorDetails(data, collection, { dom = data?.dom === true
         length: data.value.length,
         editor: data.editor || null,
         liveDOM: data.liveDOM || null,
+        detachedDOM: data.detachedDOM || null,
         parentDetails: data.parentDetails || null
     });
     if (collection) {

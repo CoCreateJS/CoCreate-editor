@@ -1,34 +1,108 @@
-import createTextEditor from "./text.js";
-import createDOMEditor from "./dom.js";
-import createMarkdownEditor from "./markdown.js";
-import createCodeEditor from "./code.js";
 import { updateEditorDetails } from "./utilities/updateEditorDetails.js";
 import { bindEditorDetailsLiveDOM } from "./utilities/createEditorDetails.js";
 import * as lengthEditorDetails from "./utilities/lengthEditorDetails.js";
 
 const detailsByEditor = new WeakMap();
+const updatesByEditor = new WeakMap();
+const editorLoaders = {
+    text: () => import("./text.js"),
+    dom: () => import("./dom.js"),
+    markdown: () => import("./markdown.js"),
+    code: () => import("./code.js")
+};
+const parserLoaders = {
+    dom: () => import("./parsers/dom.js"),
+    markdown: () => import("./parsers/markdown.js"),
+    code: () => import("./parsers/code.js")
+};
+const editorModuleCache = new Map();
+const parserModuleCache = new Map();
 
 function assertEditorKey(editor) {
     if ((typeof editor !== "object" || editor === null) && typeof editor !== "function")
         throw new TypeError("Editor must be an object to use as a WeakMap key.");
 }
 
+function load(type, loaders, cache) {
+    const loader = loaders[type];
+    if (!loader) throw new TypeError(`Unknown prototype editor or parser: ${type}`);
+    if (!cache.has(type)) {
+        const pending = loader().catch(error => {
+            cache.delete(type);
+            throw error;
+        });
+        cache.set(type, pending);
+    }
+    return cache.get(type);
+}
+
 function store(editor, state) {
     assertEditorKey(editor);
     detailsByEditor.set(editor, state.details);
+    if (state.update) updatesByEditor.set(editor, state.update);
+    else updatesByEditor.delete(editor);
     return state.details;
 }
 
-export function parseAndStoreEditorDetails(editor, source) {
-    return store(editor, createDOMEditor(source, editor));
+export function loadEditor(type) {
+    return load(type, editorLoaders, editorModuleCache);
 }
 
-export function parseAndStoreTextDetails(editor, source) {
-    return store(editor, createTextEditor(source, editor));
+export function loadParser(type) {
+    return load(type, parserLoaders, parserModuleCache);
 }
 
-export function parseAndStoreMarkdownDetails(editor, source) {
-    return store(editor, createMarkdownEditor(source, editor));
+export function normalizeCodeLanguage(language) {
+    const aliases = { js: "javascript", py: "python", ts: "typescript", sh: "bash", yml: "yaml" };
+    const value = String(language || "text").trim().toLowerCase();
+    return aliases[value] || value;
+}
+
+export async function parseDOM(source, editor = null) {
+    const parser = await loadParser("dom");
+    return parser.default(source, editor);
+}
+
+export async function parseMarkdown(source, editor = null) {
+    const parser = await loadParser("markdown");
+    return parser.default(source, editor);
+}
+
+export async function parseCode(source, language = "text", editor = null) {
+    const parser = await loadParser("code");
+    return parser.parseCode(source, language, editor);
+}
+
+export async function createTextEditor(source, editor = null) {
+    const module = await loadEditor("text");
+    return module.createTextEditor(source, editor);
+}
+
+export async function createDOMEditor(source, editor = null) {
+    const module = await loadEditor("dom");
+    return module.createDOMEditor(source, editor);
+}
+
+export async function createMarkdownEditor(source, editor = null) {
+    const module = await loadEditor("markdown");
+    return module.createMarkdownEditor(source, editor);
+}
+
+export async function createCodeEditor(source, language = "text", editor = null) {
+    const module = await loadEditor("code");
+    return module.createCodeEditor(source, language, editor);
+}
+
+export async function parseAndStoreEditorDetails(editor, source) {
+    return store(editor, await createDOMEditor(source, editor));
+}
+
+export async function parseAndStoreTextDetails(editor, source) {
+    return store(editor, await createTextEditor(source, editor));
+}
+
+export async function parseAndStoreMarkdownDetails(editor, source) {
+    return store(editor, await createMarkdownEditor(source, editor));
 }
 
 export async function parseAndStoreCodeDetails(editor, source, language = "text") {
@@ -42,14 +116,15 @@ export function getStoredEditorDetails(editor) {
 
 export function deleteStoredEditorDetails(editor) {
     assertEditorKey(editor);
+    updatesByEditor.delete(editor);
     return detailsByEditor.delete(editor);
 }
 
 export function updateStoredEditorDetails(editor, update) {
     const details = getStoredEditorDetails(editor);
     if (!details) throw new Error("No prototype editor details are stored for this editor.");
-    return updateEditorDetails(details, update);
+    const updateDetails = updatesByEditor.get(editor) || updateEditorDetails;
+    return updateDetails(details, update, { editor });
 }
 
-export { createTextEditor, createDOMEditor, createMarkdownEditor, createCodeEditor };
 export { lengthEditorDetails, updateEditorDetails, bindEditorDetailsLiveDOM };

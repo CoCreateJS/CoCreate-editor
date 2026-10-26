@@ -3,40 +3,52 @@
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>CoCreate Editor: On-demand modes and languages</title>
-        <link rel="stylesheet" href="../dist/CoCreate-editor.min.css" />
+        <title>CoCreate Editor Prototype</title>
         <style>
-            body { max-width: 60rem; margin: 2rem auto; padding: 0 1rem; font: 16px/1.5 system-ui, sans-serif; }
-            [editor] { display: block; box-sizing: border-box; width: 100%; min-height: 5rem; padding: 0.75rem; border: 1px solid #adb5bd; }
-            .controls { display: flex; flex-wrap: wrap; align-items: end; gap: 1rem; margin: 1.5rem 0; }
-            label { display: grid; gap: 0.25rem; }
-            button, select { font: inherit; padding: 0.35rem; }
-            section { margin-bottom: 2rem; }
-            pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-            textarea { box-sizing: border-box; width: 100%; font: inherit; padding: 0.5rem; }
-            .parsed-preview { min-height: 2rem; padding: 0.75rem; border: 1px solid #d0d7de; }
+            :root { color-scheme: light; font: 16px/1.5 system-ui, sans-serif; color: #20242b; background: #f5f7fa; }
+            body { max-width: 68rem; margin: 2.5rem auto; padding: 0 1.25rem; }
+            h1 { margin-bottom: .25rem; }
+            .intro { color: #596273; margin-top: 0; }
+            .tabs { display: flex; gap: .5rem; border-bottom: 1px solid #d7dce4; margin: 1rem 0; }
+            [hidden] { display: none !important; }
+            .tabs button { border: 0; border-bottom: 3px solid transparent; background: transparent; padding: .65rem 1rem; font: inherit; cursor: pointer; }
+            .tabs button[aria-selected="true"] { color: #4c3ab5; border-bottom-color: #6750d8; font-weight: 650; }
+            .toolbar { min-height: 2.5rem; display: flex; align-items: center; gap: 1rem; margin: 1rem 0; }
+            label { display: flex; align-items: center; gap: .5rem; }
+            select, textarea, button { font: inherit; }
+            select, .action { padding: .4rem .6rem; }
+            .action { border: 1px solid #c8ced8; border-radius: .3rem; background: white; cursor: pointer; }
+            .workspace { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; align-items: start; }
+            .workspace.single { grid-template-columns: minmax(0, 1fr); }
+            .panel { min-width: 0; border: 1px solid #d7dce4; border-radius: .6rem; background: white; overflow: hidden; }
+            .panel h2 { font-size: .95rem; margin: 0; padding: .7rem .9rem; border-bottom: 1px solid #e5e8ed; }
+            .source-input { box-sizing: border-box; display: block; width: 100%; min-height: 24rem; padding: .9rem; outline: 0; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; font: 14px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
+            textarea { box-sizing: border-box; display: block; width: 100%; min-height: 24rem; resize: vertical; padding: .9rem; border: 0; outline: 0; tab-size: 4; font: 14px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
+            pre { box-sizing: border-box; margin: 0; min-height: 24rem; max-height: 34rem; overflow: auto; padding: .85rem; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+            #preview-content { box-sizing: border-box; min-height: 24rem; max-height: 34rem; overflow: auto; padding: .85rem; }
+            #preview-content pre { min-height: 0; max-height: none; padding: 0; }
+            .details-console { margin-top: 1rem; }
+            .details-console pre { min-height: 8rem; max-height: 20rem; background: #171923; color: #e2e5ef; }
+            #status { min-height: 1.5rem; margin-left: auto; color: #596273; }
+            .error { color: #a4262c !important; }
+            @media (max-width: 760px) { .workspace { grid-template-columns: 1fr; } }
         </style>
     </head>
     <body>
-        <h1>CoCreate Editor</h1>
-        <p>This page starts without an editor. Try the parser examples first; they return detached DOM
-            without initializing editing. Add an editor below to load the editing core. Open your
-            browser's Network tab to see which modules are requested.</p>
+        <h1>CoCreate Editor Prototype</h1>
+        <p class="intro">Editor mode initializes an editable source surface. Parser mode runs Markdown or code parsing on demand without creating an editor.</p>
 
-        <div class="controls">
+        <div class="toolbar">
             <label>Mode
                 <select id="mode">
-                    <option value="text">Text</option>
-                    <option value="dom">DOM</option>
-                    <option value="markdown">Markdown</option>
-                    <option value="code">Code</option>
+                    <option value="editor">Editor</option>
+                    <option value="parser">Parser</option>
                 </select>
             </label>
-            <label>Code language
-                <select id="language" disabled>
-                    <option value="">None (plain text)</option>
-                    <option value="html">HTML</option>
+            <label id="language-control" hidden>Code language
+                <select id="language">
                     <option value="javascript">JavaScript</option>
+                    <option value="html">HTML</option>
                     <option value="css">CSS</option>
                     <option value="json">JSON</option>
                     <option value="python">Python</option>
@@ -50,154 +62,294 @@
                     <option value="php">PHP</option>
                 </select>
             </label>
-            <button id="add-editor" type="button">Add editor</button>
-            <button id="add-frame" type="button">Add DOM editor in iframe</button>
+            <button id="parse-source" class="action" type="button" hidden>Parse source</button>
+            <span id="status" role="status">Starting prototype…</span>
         </div>
-        <p id="status" role="status"></p>
 
-        <section>
-            <h2>Parse Markdown without an editor</h2>
-            <p><code>parseMarkdown()</code> returns detached rendered DOM. This example displays the
-                rendered result and its serialized inner HTML.</p>
-            <label>Markdown source
-                <textarea id="markdown-source" rows="5"># Stored message
+        <div id="editor-tabs" class="tabs" role="tablist" aria-label="Editor type">
+            <button type="button" role="tab" aria-selected="true" data-type="text">Text</button>
+            <button type="button" role="tab" aria-selected="false" data-type="dom">DOM</button>
+            <button type="button" role="tab" aria-selected="false" data-type="markdown">Markdown</button>
+            <button type="button" role="tab" aria-selected="false" data-type="code">Code</button>
+        </div>
+        <div id="parser-tabs" class="tabs" role="tablist" aria-label="Parser type" hidden>
+            <button type="button" role="tab" aria-selected="true" data-type="markdown">Markdown</button>
+            <button type="button" role="tab" aria-selected="false" data-type="code">Code</button>
+        </div>
 
-This **Markdown** is rendered without initializing an editor.</textarea>
-            </label>
-            <button id="parse-markdown" type="button">Parse Markdown</button>
-            <h3>Rendered DOM</h3>
-            <div id="markdown-preview" class="parsed-preview"></div>
-            <h3>innerHTML</h3>
-            <pre id="markdown-html"></pre>
+        <div class="workspace">
+            <section class="panel">
+                <h2 id="source-title">Editor source</h2>
+                <div id="editor-host"></div>
+            </section>
+            <section id="preview-panel" class="panel" hidden>
+                <h2 id="preview-title">Rendered preview</h2>
+                <div id="preview-content"></div>
+            </section>
+        </div>
+        <section class="panel details-console">
+            <h2 id="details-title">Editor details</h2>
+            <pre id="details-view">Waiting for initialization…</pre>
         </section>
 
-        <section>
-            <h2>Parse code without an editor</h2>
-            <p><code>parseCode()</code> loads only the selected language parser and returns detached
-                syntax-highlighted DOM.</p>
-            <label>Code language
-                <select id="parse-language">
-                    <option value="javascript">JavaScript</option>
-                    <option value="html">HTML</option>
-                    <option value="css">CSS</option>
-                    <option value="json">JSON</option>
-                    <option value="python">Python</option>
-                    <option value="typescript">TypeScript</option>
-                    <option value="sql">SQL</option>
-                    <option value="bash">Bash</option>
-                    <option value="yaml">YAML</option>
-                    <option value="c">C</option>
-                    <option value="go">Go</option>
-                    <option value="java">Java</option>
-                    <option value="php">PHP</option>
-                </select>
-            </label>
-            <label>Code source
-                <textarea id="code-source" rows="5">const message = "Parsed without an editor";
-console.log(message);</textarea>
-            </label>
-            <button id="parse-code" type="button">Parse code</button>
-            <h3>Rendered DOM</h3>
-            <div id="code-preview" class="parsed-preview"></div>
-            <h3>innerHTML</h3>
-            <pre id="code-html"></pre>
-        </section>
-
-        <div id="examples"></div>
-
-        <script src="../dist/CoCreate-editor.min.js"></script>
+        <script src="../dist/CoCreate-editor.js"></script>
         <script>
-            const mode = document.querySelector('#mode');
-            const language = document.querySelector('#language');
+            const samples = {
+                text: "Edit plain text here.",
+                dom: [
+                    '<h3 class="title  primary"  data-id="heading"   title="Edit this heading">Edit this heading</h3>',
+                    '<div class="broken"  data-note="missing closing angle"',
+                    '<input class="field  compact"  type="text"   placeholder="Type  here" disabled>',
+                    '<img class="preview  rounded"  src="example.png"   alt="Example  image">',
+                    '<p class="description  muted"  data-state="ready"   title="Two  spaces inside">HTML source is split into editor details.</p>'
+                ].join('\n'),
+                markdown: "# Markdown\n\nWrite **Markdown** here.",
+                javascript: 'const greeting = "Hello";\nconsole.log(greeting);',
+                html: '<p class="card">HTML code tokenization</p>',
+                css: '.card { color: #7652a3; padding: 1rem; }',
+                json: '{\n  "greeting": "Hello",\n  "count": 3\n}',
+                python: 'def greet(name):\n    return f"Hello, {name}!"',
+                typescript: 'interface User { name: string; }\nconst greet = (user: User) => user.name;',
+                sql: 'SELECT name, email\nFROM users\nWHERE active = TRUE;',
+                bash: '#!/usr/bin/env bash\necho "Hello, world"',
+                yaml: 'name: CoCreate\nfeatures:\n  - editor\n  - collaboration',
+                c: '#include <stdio.h>\nint main(void) { return 0; }',
+                go: 'package main\n\nfunc main() {}',
+                java: 'public class Main { public static void main(String[] args) {} }',
+                php: '<?php\necho "Hello, world";\n?>'
+            };
+            const host = document.querySelector('#editor-host');
+            const detailsView = document.querySelector('#details-view');
+            const previewPanel = document.querySelector('#preview-panel');
+            const previewContent = document.querySelector('#preview-content');
+            const previewTitle = document.querySelector('#preview-title');
+            const workspace = document.querySelector('.workspace');
             const status = document.querySelector('#status');
-            for (const selector of ['#markdown-source', '#code-source']) {
-                const input = document.querySelector(selector);
-                input.value = input.value.replace(/\n$/, '');
+            const languageControl = document.querySelector('#language-control');
+            const language = document.querySelector('#language');
+            const mode = document.querySelector('#mode');
+            const editorTabs = document.querySelector('#editor-tabs');
+            const parserTabs = document.querySelector('#parser-tabs');
+            const parseButton = document.querySelector('#parse-source');
+            const sourceTitle = document.querySelector('#source-title');
+            const detailsTitle = document.querySelector('#details-title');
+            let activeEditor = null;
+            let activeMode = 'editor';
+            let activeType = 'text';
+
+            function formatDetails(details) {
+                detailsView.textContent = details.map((detail, index) => {
+                    const label = [detail.kind, detail.tag, detail.token, detail.syntax].filter(Boolean).join(' / ');
+                    return `${String(index).padStart(3, '0')}  ${String(detail.length).padStart(4, ' ')}  ${label}\n     ${JSON.stringify(detail.value)}`;
+                }).join('\n');
             }
-            document.querySelector('#parse-markdown').addEventListener('click', async () => {
+
+            function appendMarkdownInline(parent, records, skipHeadingMarker) {
+                const stack = [parent];
+                let skipHeadingSpace = skipHeadingMarker;
+                for (const detail of records) {
+                    const syntax = detail.syntax;
+                    if (detail.kind === 'element' && detail.tag?.match(/^h[1-6]$/)) continue;
+                    if (skipHeadingSpace && detail.kind === 'whitespace') {
+                        skipHeadingSpace = false;
+                        continue;
+                    }
+                    if (detail.kind === 'delimiter' && syntax) {
+                        const openTag = syntax === 'strong-open' ? 'strong'
+                            : syntax === 'emphasis-open' ? 'em'
+                                : syntax === 'strike-open' ? 'del'
+                                    : syntax === 'code-open' ? 'code' : null;
+                        const close = /-(?:close)$/.test(syntax);
+                        if (openTag) {
+                            const inline = document.createElement(openTag);
+                            stack[stack.length - 1].append(inline);
+                            stack.push(inline);
+                        } else if (close && stack.length > 1) stack.pop();
+                        continue;
+                    }
+                    if (detail.kind === 'lineBreak') continue;
+                    if (['blockquote', 'list-marker', 'setext-heading', 'thematic-break'].includes(syntax)) continue;
+                    stack[stack.length - 1].append(document.createTextNode(detail.value));
+                }
+            }
+
+            function renderMarkdown(details) {
+                const root = document.createElement('div');
+                const lines = new Map();
+                for (const detail of details) {
+                    if (!lines.has(detail.line)) lines.set(detail.line, []);
+                    lines.get(detail.line).push(detail);
+                }
+                for (const records of lines.values()) {
+                    const heading = records.find(detail => detail.kind === 'element' && /^h[1-6]$/.test(detail.tag || ''));
+                    const kind = records.find(detail => detail.blockKind)?.blockKind || 'paragraph';
+                    const visible = records.some(detail => detail.kind === 'text' || detail.kind === 'codeText');
+                    if (!visible && kind !== 'rule') continue;
+                    if (kind === 'rule') { root.append(document.createElement('hr')); continue; }
+                    const tag = heading?.tag || (kind === 'quote' ? 'blockquote' : kind === 'list' ? 'ul' : 'p');
+                    const block = document.createElement(tag);
+                    const content = kind === 'list' ? document.createElement('li') : block;
+                    if (kind === 'list') block.append(content);
+                    appendMarkdownInline(content, records, !!heading);
+                    root.append(block);
+                }
+                previewContent.replaceChildren(root);
+            }
+
+            function renderCode(details) {
+                const pre = document.createElement('pre');
+                const code = document.createElement('code');
+                for (const detail of details) {
+                    if (detail.token) {
+                        const token = document.createElement('span');
+                        token.className = `token-${detail.token}`;
+                        token.textContent = detail.value;
+                        code.append(token);
+                    } else code.append(document.createTextNode(detail.value));
+                }
+                pre.append(code);
+                previewContent.replaceChildren(pre);
+            }
+
+            function renderDOM(source) {
+                const template = document.createElement('template');
+                template.innerHTML = source;
+                previewContent.replaceChildren(template.content.cloneNode(true));
+            }
+
+            async function renderEditorPreview(type, source, details) {
+                if (type === 'markdown') {
+                    const renderedDetails = details || await CoCreate.editor.parseMarkdown(source);
+                    renderMarkdown(renderedDetails);
+                } else if (type === 'dom') renderDOM(source);
+                else if (type === 'code') {
+                    const tokens = await CoCreate.editor.parseCode(source, language.value);
+                    renderCode(tokens);
+                }
+            }
+
+            function markSelected(tabs, type) {
+                tabs.querySelectorAll('[role="tab"]').forEach(tab => {
+                    tab.setAttribute('aria-selected', String(tab.dataset.type === type));
+                });
+            }
+
+            function waitForReady(element) {
+                if (element.editor?.init) return Promise.resolve();
+                return new Promise((resolve, reject) => {
+                    element.addEventListener('editor-ready', resolve, { once: true });
+                    element.addEventListener('editor-error', event => reject(event.detail.error), { once: true });
+                });
+            }
+
+            async function selectEditor(type) {
+                activeMode = 'editor';
+                activeType = type;
+                mode.value = 'editor';
+                editorTabs.hidden = false;
+                parserTabs.hidden = true;
+                markSelected(editorTabs, type);
+                languageControl.hidden = type !== 'code';
+                parseButton.hidden = true;
+                sourceTitle.textContent = 'Editor source';
+                detailsTitle.textContent = 'Editor details';
+                previewPanel.hidden = true;
+                workspace.classList.add('single');
+                if (activeEditor) CoCreate.editor.destroyEditor(activeEditor);
+                const editor = document.createElement('div');
+                editor.className = 'source-input';
+                editor.setAttribute('editor', type);
+                editor.setAttribute('crdt', 'false');
+                editor.setAttribute('contenteditable', 'true');
+                editor.setAttribute('spellcheck', 'false');
+                if (type === 'code') editor.setAttribute('editor-language', language.value);
+                editor.value = type === 'code' ? samples[language.value] : samples[type];
+                editor.setAttribute('aria-label', `${type} editor source`);
+                host.replaceChildren(editor);
+                activeEditor = editor;
+                detailsView.textContent = 'Waiting for observer…';
+                status.classList.remove('error');
+                status.textContent = `Initializing ${type}${type === 'code' ? ` / ${language.value}` : ''}…`;
                 try {
-                    const output = await CoCreate.editor.parseMarkdown(
-                        document.querySelector('#markdown-source').value
-                    );
-                    document.querySelector('#markdown-html').textContent = output.innerHTML;
-                    document.querySelector('#markdown-preview').replaceChildren(output);
-                    status.textContent = 'Markdown parsed without initializing an editor';
+                    await waitForReady(editor);
+                    const initialDetails = CoCreate.editor.getStoredEditorDetails(editor) || [];
+                    formatDetails(initialDetails);
+                    editor.addEventListener('editor-details-change', event =>
+                        formatDetails(event.detail.result.editorDetails));
+                    status.textContent = `${type}${type === 'code' ? ` / ${language.value}` : ''} editor ready`;
                 } catch (error) {
-                    status.textContent = `Unable to parse Markdown: ${error.message}`;
+                    status.textContent = `Initialization failed: ${error.message}`;
+                    status.classList.add('error');
+                }
+            }
+
+            async function selectParser(type) {
+                activeMode = 'parser';
+                activeType = type;
+                mode.value = 'parser';
+                editorTabs.hidden = true;
+                parserTabs.hidden = false;
+                markSelected(parserTabs, type);
+                languageControl.hidden = type !== 'code';
+                parseButton.hidden = false;
+                sourceTitle.textContent = 'Parser input';
+                detailsTitle.textContent = 'Parser details';
+                previewPanel.hidden = false;
+                workspace.classList.remove('single');
+                previewTitle.textContent = type === 'markdown' ? 'Rendered Markdown' : 'Code preview';
+                if (activeEditor) CoCreate.editor.destroyEditor(activeEditor);
+                activeEditor = null;
+                const source = document.createElement('textarea');
+                source.value = type === 'code' ? samples[language.value] : samples.markdown;
+                source.setAttribute('aria-label', `${type} parser input`);
+                host.replaceChildren(source);
+                detailsView.textContent = 'Run the parser to inspect its records.';
+                status.classList.remove('error');
+                status.textContent = `${type}${type === 'code' ? ` / ${language.value}` : ''} parser selected`;
+            }
+
+            async function parseSource() {
+                const source = host.querySelector('textarea').value;
+                detailsView.textContent = 'Parsing source…';
+                status.classList.remove('error');
+                status.textContent = `Loading ${activeType}${activeType === 'code' ? ` / ${language.value}` : ''} parser…`;
+                try {
+                    const details = activeType === 'markdown'
+                        ? await CoCreate.editor.parseMarkdown(source)
+                        : await CoCreate.editor.parseCode(source, language.value);
+                    formatDetails(details);
+                    if (activeType === 'markdown') renderMarkdown(details);
+                    else renderCode(details);
+                    status.textContent = `${activeType}${activeType === 'code' ? ` / ${language.value}` : ''} parser ready`;
+                } catch (error) {
+                    detailsView.textContent = error.stack || error.message;
+                    status.textContent = `Parser failed: ${error.message}`;
+                    status.classList.add('error');
+                }
+            }
+
+            mode.addEventListener('change', () => {
+                if (mode.value === 'editor') selectEditor(['text', 'dom', 'markdown', 'code'].includes(activeType) ? activeType : 'text');
+                else selectParser(activeType === 'code' ? 'code' : 'markdown');
+            });
+            editorTabs.querySelectorAll('[role="tab"]').forEach(tab => tab.addEventListener('click', () => selectEditor(tab.dataset.type)));
+            parserTabs.querySelectorAll('[role="tab"]').forEach(tab => tab.addEventListener('click', () => selectParser(tab.dataset.type)));
+            parseButton.addEventListener('click', parseSource);
+            language.addEventListener('change', () => {
+                if (activeType !== 'code') return;
+                if (activeMode === 'editor') selectEditor('code');
+                else {
+                    host.querySelector('textarea').value = samples[language.value];
+                    detailsView.textContent = 'Run the parser to inspect its records.';
+                    status.textContent = `code / ${language.value} parser selected`;
                 }
             });
-            document.querySelector('#parse-code').addEventListener('click', async () => {
-                try {
-                    const output = await CoCreate.editor.parseCode(
-                        document.querySelector('#code-source').value,
-                        document.querySelector('#parse-language').value
-                    );
-                    document.querySelector('#code-html').textContent = output.innerHTML;
-                    document.querySelector('#code-preview').replaceChildren(output);
-                    status.textContent = 'Code parsed without initializing an editor';
-                } catch (error) {
-                    status.textContent = `Unable to parse code: ${error.message}`;
-                }
-            });
-            mode.addEventListener('change', () => { language.disabled = mode.value !== 'code'; });
             document.addEventListener('editor-error', event => {
-                status.textContent = `Unable to load editor: ${event.detail.error.message}`;
+                status.textContent = `Editor error: ${event.detail.error.message}`;
+                status.classList.add('error');
             });
 
-            async function addEditor(inFrame = false) {
-                const type = inFrame ? 'dom' : mode.value;
-                const selectedLanguage = type === 'code' ? language.value : '';
-                const section = document.createElement('section');
-                const heading = document.createElement('h2');
-                heading.textContent = `${type.toUpperCase()}${selectedLanguage ? ` (${selectedLanguage})` : ''}${inFrame ? ' in iframe' : ''}`;
-                const element = document.createElement(inFrame ? 'iframe' : 'div');
-                element.setAttribute('editor', type);
-                element.setAttribute('crdt', 'false');
-                if (inFrame) element.title = 'DOM document editor';
-                if (selectedLanguage) element.setAttribute('editor-language', selectedLanguage);
-                element.value = type === 'dom' || selectedLanguage === 'html'
-                    ? '<h3>Edit this heading</h3>\n<p>HTML rendered from its source.</p>'
-                    : type === 'markdown' ? '# Markdown\n\nWrite **Markdown** here.'
-                    : selectedLanguage === 'javascript' ? 'const greeting = "Hello";\nconsole.log(greeting);'
-                    : selectedLanguage === 'css' ? '.card { color: #7652a3; padding: 1rem; }'
-                    : selectedLanguage === 'json' ? '{\n  "greeting": "Hello",\n  "count": 3,\n  "active": true\n}'
-                    : selectedLanguage === 'python' ? 'def greet(name):\n    """Return a greeting."""\n    return f"Hello, {name}!"\n\nprint(greet("world"))'
-                    : selectedLanguage === 'typescript' ? 'interface User {\n    name: string;\n    active: boolean;\n}\n\nconst greet = (user: User): string => `Hello, ${user.name}`;'
-                    : selectedLanguage === 'sql' ? 'SELECT name, email\nFROM users\nWHERE active = TRUE\nORDER BY name;'
-                    : selectedLanguage === 'bash' ? '#!/usr/bin/env bash\nname="world"\nif [ -n "$name" ]; then\n  echo "Hello, $name!"\nfi'
-                    : selectedLanguage === 'yaml' ? 'name: CoCreate\nversion: 1.0\nactive: true\nfeatures:\n  - editor\n  - collaboration\nsettings:\n  theme: dark\n  tags: [code, markdown]'
-                    : selectedLanguage === 'c' ? '#include <stdio.h>\n\nint main(void) {\n    printf("Hello, world\\n");\n    return 0;\n}'
-                    : selectedLanguage === 'go' ? 'package main\n\nimport "fmt"\n\nfunc main() {\n    fmt.Println("Hello, world")\n}'
-                    : selectedLanguage === 'java' ? 'public class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello, world");\n    }\n}'
-                    : selectedLanguage === 'php' ? '<?php\ndeclare(strict_types=1);\n\nfunction greet(string $name): string {\n    return "Hello, $name!";\n}\n\necho greet("world");\n?>'
-                    : 'Edit plain text here.';
-                const details = document.createElement('details');
-                const summary = document.createElement('summary');
-                summary.textContent = 'Canonical source';
-                const source = document.createElement('pre');
-                source.textContent = element.value;
-                details.append(summary, source);
-                element.addEventListener('editor-source-change', () => { source.textContent = element.value; });
-                section.append(heading, element, details);
-                document.querySelector('#examples').append(section);
-                status.textContent = `Loading ${heading.textContent}…`;
-                await CoCreate.editor.initElement(element);
-                while (element.editor.loading) await element.editor.loading;
-                if (!element.editor.init) return;
-                status.textContent = `${heading.textContent} ready`;
-                if (type === 'dom') {
-                    const button = document.createElement('button');
-                    button.type = 'button';
-                    button.textContent = 'Set heading style through the DOM editor';
-                    button.addEventListener('click', () => element.editor.setAttribute({
-                        target: (inFrame ? element.contentDocument : element).querySelector('h3'),
-                        name: 'style', value: 'color: #7652a3; border-bottom: 2px solid currentColor'
-                    }));
-                    section.append(button);
-                }
-            }
-            document.querySelector('#add-editor').addEventListener('click', () => addEditor());
-            document.querySelector('#add-frame').addEventListener('click', () => addEditor(true));
+            selectEditor('text');
         </script>
     </body>
 </html>

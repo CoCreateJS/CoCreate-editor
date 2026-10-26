@@ -63,6 +63,7 @@ function updateDetail(detail) {
 }
 
 function createNode(detail, document) {
+    if (detail.sourceOnly) return null;
     if (detail.kind === "element" && detail.tag) return document.createElement(detail.tag);
     if (detail.kind === "comment")
         return document.createComment(detail.value.slice(4, detail.value.endsWith("-->") ? -3 : undefined));
@@ -98,6 +99,8 @@ function addDetail(detail, details, editor) {
  * This is an internal update step, not a user-facing editor API.
  */
 export function renderEditor(editor, { editorDetails, removed = [], edited = [], added = [] }) {
+    if (!editorDetails.some(detail => detail.liveDOM) && !editor?.editor?.liveDOM && !editor?.liveDOM)
+        return;
     const removals = removed.map(item => item.detail || item)
         .sort((a, b) => depth(b) - depth(a));
     for (const detail of removals) removeDetail(detail);

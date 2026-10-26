@@ -22,13 +22,12 @@ function normalizeUpdate(update) {
  * detail state is committed, the internal renderer applies those lists to the
  * referenced live nodes.
  */
-export function updateEditorDetails(details, update) {
+export function updateEditorDetails(details, update, { planner = planDetailsEdit, render = renderEditor, editor } = {}) {
     if (!Array.isArray(details))
         throw new TypeError("Editor details must be an array.");
 
     const { start, end, value } = normalizeUpdate(update);
     const previousSource = detailsToSource(details);
-    const plan = planDetailsEdit(details, start, end, value);
 
     // CRDT events commonly include the resulting full string. Check it before
     // mutating the stored array so a stale or mismatched event cannot corrupt it.
@@ -37,21 +36,37 @@ export function updateEditorDetails(details, update) {
     if (typeof expectedSource === "string" && expectedSource !== nextSource)
         throw new RangeError("CRDT update does not match the supplied editor details.");
 
-    for (const { detail, value } of plan.edited) {
+    const plan = planner(details, start, end, value, { previousSource, source: nextSource });
+    return applyEditorDetailsPlan(details, { ...plan, previousSource, source: nextSource }, { render, editor });
+}
+
+/** Commit a completed plan, preserving removed references until rendering ends. */
+export function applyEditorDetailsPlan(details, plan, { render = renderEditor, editor } = {}) {
+    const stale = plan.baseDetails && plan.baseValues
+        ? details.length !== plan.baseDetails.length || details.some((detail, index) =>
+            detail !== plan.baseDetails[index] || detail.value !== plan.baseValues[index] || detail.length !== detail.value.length)
+        : plan.previousSource !== detailsToSource(details) || (plan.baseDetails &&
+            (details.length !== plan.baseDetails.length || details.some((detail, index) => detail !== plan.baseDetails[index])));
+    if (stale)
+        throw new Error("Editor details changed after this edit was staged.");
+
+    for (const { detail, value, changes } of plan.edited) {
+        if (changes) Object.assign(detail, changes);
         detail.value = value;
         detail.length = detail.value.length;
     }
-    details.length = 0;
-    for (const detail of plan.nextDetails) details.push(detail);
+    if (details.length !== plan.nextDetails.length || details.some((detail, index) => detail !== plan.nextDetails[index])) {
+        details.length = 0;
+        for (const detail of plan.nextDetails) details.push(detail);
+    }
     for (const detail of plan.added) bindEditorDetails(detail, details);
-    const editor = details[0]?.editor || plan.removed[0]?.detail.editor || plan.added[0]?.editor;
-    renderEditor(editor, { ...plan, editorDetails: details });
+    editor ||= details[0]?.editor || plan.removed[0]?.detail.editor || plan.added[0]?.editor;
+    const rendered = render(editor, { ...plan, editorDetails: details });
 
     return {
         ...plan,
         editorDetails: details,
-        previousSource,
-        source: nextSource
+        rendered
     };
 }
 

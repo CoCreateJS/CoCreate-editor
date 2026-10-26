@@ -8,10 +8,10 @@ test("load editor-details prototype", async () => {
     ({ lengthEditorDetails } = prototype);
 });
 
-test("DOM parser creates an ordered, source-preserving detail array", () => {
+test("DOM parser creates an ordered, source-preserving detail array", async () => {
     const source = '<main  class="page">\n\t<p>Hello <b>world</b></p><!-- end --></main>';
     const editor = { editor: { updateText() {} } };
-    const details = prototype.parseAndStoreEditorDetails(editor, source);
+    const details = await prototype.parseAndStoreEditorDetails(editor, source);
 
     assert.equal(lengthEditorDetails.detailsToSource(details), source);
     assert.equal(lengthEditorDetails.getDetailsLength(details), source.length);
@@ -28,10 +28,26 @@ test("DOM parser creates an ordered, source-preserving detail array", () => {
     assert.equal(details.find(detail => detail.kind === "text").setAttribute, undefined);
 });
 
-test("detail updateText, setValue, and remove dispatch detail-relative CRDT edits", () => {
+test("DOM parser keeps each contiguous text run in one detail and edits it in place at its end", async () => {
+    const source = "<p>alpha  beta\n\tgamma</p>\n<div>next line</div>";
+    const details = await prototype.parseDOM(source);
+    const text = details.filter(detail => detail.kind === "text");
+
+    assert.deepEqual(text.map(detail => detail.value), ["alpha  beta\n\tgamma", "\n", "next line"]);
+    assert.equal(lengthEditorDetails.detailsToSource(details), source);
+
+    const target = text[0];
+    const position = target.getStart() + target.length;
+    const plan = lengthEditorDetails.planDetailsEdit(details, position, position, "!");
+    assert.deepEqual(plan.added, []);
+    assert.equal(plan.edited[0].detail, target);
+    assert.equal(plan.edited[0].value, "alpha  beta\n\tgamma!");
+});
+
+test("detail updateText, setValue, and remove dispatch detail-relative CRDT edits", async () => {
     const operations = [];
     const editor = { editor: { updateText: operation => operations.push(operation) } };
-    const details = prototype.parseAndStoreEditorDetails(editor, "<p>alpha</p>");
+    const details = await prototype.parseAndStoreEditorDetails(editor, "<p>alpha</p>");
     const text = details.find(detail => detail.kind === "text");
     const original = text.value;
 
@@ -47,10 +63,10 @@ test("detail updateText, setValue, and remove dispatch detail-relative CRDT edit
     assert.equal(text.value, original, "dispatching an edit must not mutate local details");
 });
 
-test("incoming CRDT updates edit values, refresh cached lengths, and keep the source in sync", () => {
+test("incoming CRDT updates edit values, refresh cached lengths, and keep the source in sync", async () => {
     const editor = { editor: { updateText() {} } };
     const source = "<p>alpha</p>";
-    const details = prototype.parseAndStoreEditorDetails(editor, source);
+    const details = await prototype.parseAndStoreEditorDetails(editor, source);
     const text = details.find(detail => detail.kind === "text");
     const start = text.getStart() + 1;
     const result = prototype.updateStoredEditorDetails(editor, {
@@ -68,10 +84,10 @@ test("incoming CRDT updates edit values, refresh cached lengths, and keep the so
     assert.equal(text.getStart(), start - 1);
 });
 
-test("range deletion classifies removed records and preserves exact source balance", () => {
+test("range deletion classifies removed records and preserves exact source balance", async () => {
     const editor = { editor: { updateText() {} } };
     const source = "<p>a b</p>";
-    const details = prototype.parseAndStoreEditorDetails(editor, source);
+    const details = await prototype.parseAndStoreEditorDetails(editor, source);
     const result = prototype.updateStoredEditorDetails(editor, {
         start: 3,
         length: 3,
@@ -79,15 +95,15 @@ test("range deletion classifies removed records and preserves exact source balan
         string: "<p></p>"
     });
 
-    assert.equal(result.removed.length, 3);
+    assert.equal(result.removed.length, 1, "the complete contiguous text run is one removable detail");
     assert.equal(lengthEditorDetails.detailsToSource(details), "<p></p>");
     assert.equal(lengthEditorDetails.getDetailsLength(details), 7);
 });
 
-test("element attribute APIs resolve attribute details and dispatch CRDT ranges", () => {
+test("element attribute APIs resolve attribute details and dispatch CRDT ranges", async () => {
     const operations = [];
     const editor = { editor: { updateText: operation => operations.push(operation) } };
-    const details = prototype.parseAndStoreEditorDetails(editor, '<div class="old"></div>');
+    const details = await prototype.parseAndStoreEditorDetails(editor, '<div class="old"></div>');
     const element = details.find(detail => detail.kind === "element");
     const nativeAttribute = { name: "class", value: "old" };
     const liveElement = {
@@ -115,11 +131,11 @@ test("element attribute APIs resolve attribute details and dispatch CRDT ranges"
     assert.equal(element.getAttribute("missing"), null);
 });
 
-test("Markdown details preserve delimiters, content, and individual whitespace nodes without DOM APIs", () => {
+test("Markdown details preserve delimiters, content, and individual whitespace nodes without DOM APIs", async () => {
     const tick = String.fromCharCode(96);
     const source = "# Heading **bold**\r\n- item [link](url)\n\n\tcode " + tick + "x * y" + tick + "\n";
     const editor = { editor: { updateText() {} } };
-    const details = prototype.parseAndStoreMarkdownDetails(editor, source);
+    const details = await prototype.parseAndStoreMarkdownDetails(editor, source);
 
     assert.equal(lengthEditorDetails.detailsToSource(details), source);
     assert.equal(lengthEditorDetails.getDetailsLength(details), source.length);
@@ -175,4 +191,62 @@ test("code bridge accepts every existing language module through the shared deta
         assert.equal(lengthEditorDetails.getDetailsLength(details), source.length, language);
         assert.ok(details.every(detail => detail.language === language && detail.length === detail.value.length), language);
     }
+});
+
+test("prototype core routes local input through updateText and incoming updates into details", async () => {
+    const operations = [];
+    class TextSurface extends EventTarget {
+        constructor() {
+            super();
+            this.value = "abc";
+            this.selectionStart = 1;
+            this.selectionEnd = 1;
+            this.editor = {};
+        }
+        getAttribute() { return null; }
+        hasAttribute() { return false; }
+    }
+    const element = new TextSurface();
+    const core = prototype.createPrototypeCore({ updateText: operation => operations.push(operation), eventTarget: null });
+    const details = await core.initEditor(element, { mode: "text" });
+
+    element.value = "aXbc";
+    element.dispatchEvent(new Event("input"));
+    await Promise.resolve();
+    assert.deepEqual(operations, [{ element, start: 1, length: 0, value: "X" }]);
+
+    await core.receiveUpdate({ elements: [element], start: 1, length: 0, value: "X", string: "aXbc" });
+
+    const results = await core.receiveUpdate({
+        elements: [element], start: 1, length: 1, value: "Y", string: "aYbc"
+    });
+    assert.equal(results.length, 1);
+    assert.equal(lengthEditorDetails.detailsToSource(details), "aYbc");
+    assert.equal(core.getEditorDetails(element), details);
+    core.disconnect();
+});
+
+test("prototype local text edits update details without applying the edit twice to the surface", async () => {
+    class TextSurface extends EventTarget {
+        constructor() {
+            super();
+            this.value = "abc";
+            this.selectionStart = 1;
+            this.selectionEnd = 1;
+        }
+        getAttribute() { return null; }
+        hasAttribute() { return false; }
+        setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; }
+    }
+    const element = new TextSurface();
+    const core = prototype.createPrototypeCore({ eventTarget: null });
+    const details = await core.initEditor(element, { mode: "text" });
+    element.selectionStart = element.selectionEnd = 2;
+    element.value = "aXbc";
+    element.dispatchEvent(new Event("input"));
+    await Promise.resolve();
+    assert.equal(lengthEditorDetails.detailsToSource(details), "aXbc");
+    assert.equal(element.value, "aXbc");
+    assert.equal(element.selectionStart, 2);
+    core.disconnect();
 });
