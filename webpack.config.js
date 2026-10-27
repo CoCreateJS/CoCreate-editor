@@ -18,7 +18,7 @@ export default async (env, argv) => {
 				: {}
 		},
 		entry: {
-			"CoCreate-editor": "./src/prototype/index.js"
+			"CoCreate-editor": "./src/prototype/loader.js"
 		},
 		output: {
 			path: path.resolve(__dirname, "dist"),

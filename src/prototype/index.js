@@ -11,13 +11,27 @@ import * as editorAPI from "./editors/index.js";
 import { createEditorEvents, bindEditorInput } from "./events.js";
 import { getSelection, setSelection } from "./selection.js";
 import { textChange } from "./textChange.js";
-import { initEditorInput, uninitEditorInput } from "./inputBinding.js";
-
-export { initEditorInput, uninitEditorInput };
-
 const prototypeCore = createPrototypeCore();
-const editorSelector = ":is(input, textarea, [contenteditable], [editor], [editor-language]):not([contenteditable='false']):not([editor-query][editor-attribute])";
+const editorSelector = ":is([editor], [editor-language], [contenteditable], input[realtime][array][object][key], textarea[realtime][array][object][key], input[crdt='true'][array][object][key], textarea[crdt='true'][array][object][key]):not([contenteditable='false']):not([editor-query])";
+const inputBindingSelector = "input[editor-query], textarea[editor-query]";
 let observerReady;
+let inputBindingPromise;
+
+function loadInputBinding() {
+    inputBindingPromise ||= import(/* webpackChunkName: "editor-input-binding" */ "./inputBinding.js")
+        .catch(error => { inputBindingPromise = undefined; throw error; });
+    return inputBindingPromise;
+}
+
+export async function initEditorInput(input, options) {
+    const module = await loadInputBinding();
+    return module.initEditorInput(input, options);
+}
+
+export async function uninitEditorInput(input) {
+    const module = await loadInputBinding();
+    return module.uninitEditorInput(input);
+}
 
 function emit(element, type, detail) {
     const EventConstructor = element.ownerDocument?.defaultView?.CustomEvent || globalThis.CustomEvent;
@@ -99,17 +113,17 @@ async function installObserver() {
                 name: "CoCreatePrototypeEditorInputBindings",
                 types: ["addedNodes", "attributes"],
                 attributeFilter: ["editor-query", "editor-attribute", "editor-attribute-part"],
-                selector: "input[editor-query][editor-attribute], textarea[editor-query][editor-attribute]",
+                selector: inputBindingSelector,
                 callback: mutation => {
                     const input = mutation.target;
-                    initEditorInput(input, {
+                    loadInputBinding().then(({ initEditorInput }) => initEditorInput(input, {
                         context: input.ownerDocument,
                         query: input.getAttribute("editor-query"),
-                        attribute: {
+                        attribute: input.hasAttribute("editor-attribute") ? {
                             name: input.getAttribute("editor-attribute"),
                             part: input.getAttribute("editor-attribute-part") || "value"
-                        }
-                    }).catch(error => emit(input, "editor-error", { error }));
+                        } : undefined
+                    })).catch(error => emit(input, "editor-error", { error }));
                 }
             }
         ]);
@@ -125,14 +139,14 @@ export async function init(root = globalThis.document) {
     await installObserver();
     const elements = [...root.querySelectorAll(editorSelector)];
     const editors = await initElements(elements);
-    const inputs = [...root.querySelectorAll("input[editor-query][editor-attribute], textarea[editor-query][editor-attribute]")];
+    const inputs = [...root.querySelectorAll(inputBindingSelector)];
     await Promise.all(inputs.map(input => initEditorInput(input, {
         context: root,
         query: input.getAttribute("editor-query"),
-        attribute: {
+        attribute: input.hasAttribute("editor-attribute") ? {
             name: input.getAttribute("editor-attribute"),
             part: input.getAttribute("editor-attribute-part") || "value"
-        }
+        } : undefined
     })));
     return editors;
 }

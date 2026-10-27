@@ -6,12 +6,17 @@
  * parsers do not need to know how editor objects are assembled.
  */
 
-import { initEditorInput, uninitEditorInput } from "../../inputBinding.js";
-
 export const editorPrototype = Object.create(null);
 export const elementEditorPrototype = Object.create(editorPrototype);
 const collectionsByEditor = new WeakMap();
 const editorsByNode = new WeakMap();
+let inputBindingPromise;
+
+function loadInputBinding() {
+    inputBindingPromise ||= import(/* webpackChunkName: "editor-input-binding" */ "../../inputBinding.js")
+        .catch(error => { inputBindingPromise = undefined; throw error; });
+    return inputBindingPromise;
+}
 
 export const getEditorForNode = node => node?.editor || editorsByNode.get(node);
 
@@ -48,16 +53,16 @@ Object.assign(editorPrototype, {
     init({ input, query, context, attribute, part, target } = {}) {
         if (!input) throw new TypeError("An input element is required to bind an editor detail.");
         const isAttribute = this.kind === "attribute";
-        return initEditorInput(input, {
+        return loadInputBinding().then(({ initEditorInput }) => initEditorInput(input, {
             context: context || this.element,
             target: target || (!query && (isAttribute ? this.parentNode?.liveNode : this.liveNode)),
             query,
             attribute: attribute || (isAttribute ? { name: this.name } : undefined),
             part
-        });
+        }));
     },
     uninit(input) {
-        return uninitEditorInput(input);
+        return loadInputBinding().then(({ uninitEditorInput }) => uninitEditorInput(input));
     },
     getStart() {
         const collection = collectionsByEditor.get(this);

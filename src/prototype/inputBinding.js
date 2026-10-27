@@ -29,6 +29,20 @@ function getAttributeEditor(target, name) {
     return native?.editor || target?.editor?.getAttribute?.(name) || null;
 }
 
+function getTextEditor(target) {
+    const targetEditor = target?.editor;
+    if (targetEditor?.kind === "text") return targetEditor;
+    if (targetEditor?.kind !== "element") return null;
+    const details = targetEditor.element?.editor?.nodes;
+    if (!Array.isArray(details)) return null;
+    for (const detail of details) {
+        if (detail.kind !== "text" || detail.sourceOnly) continue;
+        for (let parent = detail.parentNode; parent; parent = parent.parentNode)
+            if (parent === targetEditor) return detail;
+    }
+    return null;
+}
+
 function readPart(detail, part) {
     if (!detail) return "";
     const range = attributeRange(detail, part);
@@ -69,10 +83,11 @@ export async function initEditorInput(input, { context = input?.ownerDocument, q
     if (typeof input.editor.uninit !== "function") input.editor.uninit = () => uninitEditorInput(input);
     const descriptor = typeof attribute === "string" ? { name: attribute } : attribute;
     const name = descriptor?.name || input.getAttribute("editor-attribute");
+    const mode = name ? "attribute" : "text";
     part = descriptor?.part || input.getAttribute("editor-attribute-part") || part;
     query ||= input.getAttribute("editor-query");
-    if (!name) throw new TypeError("An attribute name is required.");
-    if (part !== "name" && part !== "value") throw new TypeError('Attribute part must be "name" or "value".');
+    if (mode === "attribute" && part !== "name" && part !== "value")
+        throw new TypeError('Attribute part must be "name" or "value".');
 
     bindings.get(input)?.disconnect();
     const controller = new AbortController();
@@ -86,22 +101,32 @@ export async function initEditorInput(input, { context = input?.ownerDocument, q
         const nextTarget = initialTarget || await findTarget(context, query);
         if (currentGeneration !== generation) return;
         target = nextTarget;
-        detail = getAttributeEditor(target, name);
-        const value = readPart(detail, part);
+        detail = mode === "attribute" ? getAttributeEditor(target, name) : getTextEditor(target);
+        const value = mode === "attribute" ? readPart(detail, part) : detail?.value || "";
         if (typeof input.value === "string") input.value = value;
         inputBinding?.setValue(value);
     };
 
-    const getCurrentDetail = () => target ? getAttributeEditor(target, name) : detail;
+    const getCurrentDetail = () => target ? mode === "attribute"
+        ? getAttributeEditor(target, name) : getTextEditor(target) : detail;
     const write = change => {
         const current = getCurrentDetail();
-        if (!current) return;
-        const range = attributeRange(current, part);
-        return current.updateText({
-            start: range.start + change.start,
-            length: change.length,
-            value: change.value
-        });
+        if (current) {
+            const range = mode === "attribute" ? attributeRange(current, part)
+                : { start: 0, end: current.length };
+            return current.updateText({ start: range.start + change.start,
+                length: change.length, value: change.value });
+        }
+        if (mode !== "text" || target?.editor?.kind !== "element") return;
+        const point = target.editor.getInsertionPoint("afterbegin");
+        if (!point) return;
+        const start = point.offset + change.start;
+        if (start + change.length <= point.editor.length)
+            return point.editor.updateText({ start, length: change.length, value: change.value });
+        const root = target.editor.element;
+        if (typeof root?.editor?.updateText === "function")
+            return root.editor.updateText({ start: point.editor.getStart() + start,
+                length: change.length, value: change.value });
     };
 
     inputBinding = bindEditorInput(input, {
@@ -148,10 +173,13 @@ export async function initEditorInput(input, { context = input?.ownerDocument, q
         }
         const update = event.detail?.update;
         const selection = getSelection(input);
-        const oldRange = detail ? attributeRange(detail, part) : null;
-        const oldStart = detail && oldRange ? detail.getStart() + oldRange.start : null;
-        const value = readPart(current, part);
-        const nextRange = attributeRange(current, part);
+        const oldRange = detail ? mode === "attribute" ? attributeRange(detail, part)
+            : { start: 0, end: detail.length } : null;
+        let oldStart = null;
+        try { if (detail && oldRange) oldStart = detail.getStart() + oldRange.start; } catch {}
+        const value = mode === "attribute" ? readPart(current, part) : current.value;
+        const nextRange = mode === "attribute" ? attributeRange(current, part)
+            : { start: 0, end: current.length };
         const nextStart = current.getStart() + nextRange.start;
         if (typeof input.value === "string" && input.value !== value) input.value = value;
         inputBinding?.setValue(value);

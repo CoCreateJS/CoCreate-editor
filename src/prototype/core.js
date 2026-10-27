@@ -174,9 +174,8 @@ export function createPrototypeCore({ updateText, eventTarget = globalThis.windo
 
     async function init(root = globalThis.document) {
         if (!root?.querySelectorAll) return [];
-        const selector = "textarea, input, [contenteditable], [editor], [editor-language]";
+        const selector = ":is([editor], [editor-language], [contenteditable], input[realtime][array][object][key], textarea[realtime][array][object][key], input[crdt='true'][array][object][key], textarea[crdt='true'][array][object][key]):not([contenteditable='false']):not([editor-query])";
         const elements = [...root.querySelectorAll(selector)].filter(element => {
-            if (element.getAttribute("contenteditable") === "false") return false;
             if (element.tagName !== "INPUT") return true;
             return ["", "text", "search", "tel", "url", "email"]
                 .includes(element.getAttribute("type")?.toLowerCase() || "");
