@@ -1,5 +1,5 @@
 import { updateEditorDetails } from "./utilities/updateEditorDetails.js";
-import { bindEditorDetailsLiveDOM } from "./utilities/createEditorDetails.js";
+import { bindEditorNode } from "./utilities/createEditor.js";
 import * as lengthEditorDetails from "./utilities/lengthEditorDetails.js";
 
 const detailsByEditor = new WeakMap();
@@ -134,4 +134,4 @@ export function updateStoredEditorDetails(editor, update) {
     return result;
 }
 
-export { lengthEditorDetails, updateEditorDetails, bindEditorDetailsLiveDOM };
+export { lengthEditorDetails, updateEditorDetails, bindEditorNode };

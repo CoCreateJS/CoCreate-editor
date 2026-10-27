@@ -61,6 +61,7 @@ export function createPrototypeCore({ updateText, eventTarget = globalThis.windo
             state.details = details;
             if (element.ownerDocument) module.renderEditor?.(element, source, details);
             element.editor ||= {};
+            element.editor.element = element;
             if (element.ownerDocument && module.getSource)
                 element.editor.getSource = () => module.getSource(element);
             state.input = bindEditorInput(element, {

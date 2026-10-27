@@ -1,15 +1,16 @@
-import { bindEditorDetailsLiveDOM } from "./createEditorDetails.js";
+import { bindEditorNode } from "./createEditor.js";
 
 function depth(detail) {
     let value = 0;
-    for (let parent = detail.parentDetails; parent; parent = parent.parentDetails) value++;
+    for (let parent = detail.parentNode; parent; parent = parent.parentNode) value++;
     return value;
 }
 
 function parentNode(detail, editor) {
-    return detail.parentDetails?.liveDOM ||
-        editor?.editor?.liveDOM ||
-        editor?.liveDOM ||
+    return detail.parentNode?.liveNode ||
+        editor?.editor?.liveNode ||
+        editor?.editor?.element ||
+        editor?.liveNode ||
         (editor?.nodeType ? editor : null) ||
         null;
 }
@@ -18,10 +19,10 @@ function nextLiveSibling(details, detail, parent) {
     const index = details.indexOf(detail);
     for (let i = index + 1; i < details.length; i++) {
         const candidate = details[i];
-        if (candidate.parentDetails !== detail.parentDetails || !candidate.liveDOM) continue;
+        if (candidate.parentNode !== detail.parentNode || !candidate.liveNode) continue;
         if (candidate.kind === "element" || candidate.kind === "text" ||
             candidate.kind === "comment" || candidate.nodeType === 3)
-            return candidate.liveDOM;
+            return candidate.liveNode;
     }
     return parent?.lastChild || null;
 }
@@ -36,28 +37,28 @@ function decodeAttribute(detail, element) {
 
 function removeDetail(detail) {
     if (detail.kind === "attribute") {
-        const attribute = detail.liveDOM;
-        const parent = detail.parentDetails?.liveDOM;
+        const attribute = detail.liveNode;
+        const parent = detail.parentNode?.liveNode;
         if (attribute?.ownerElement) attribute.ownerElement.removeAttributeNode(attribute);
         else if (parent && detail.name) parent.removeAttribute(detail.name);
         return;
     }
-    detail.liveDOM?.remove?.();
+    detail.liveNode?.remove?.();
 }
 
 function updateDetail(detail) {
     if (detail.kind === "attribute") {
-        const element = detail.parentDetails?.liveDOM;
+        const element = detail.parentNode?.liveNode;
         if (!element || !detail.name) return;
         const value = decodeAttribute(detail, element);
         if (value === null) element.removeAttribute(detail.name);
         else element.setAttribute(detail.name, value);
         const attribute = element.getAttributeNode(detail.name);
-        if (attribute) bindEditorDetailsLiveDOM(detail, attribute);
+        if (attribute) bindEditorNode(detail, attribute);
         return;
     }
-    if ((detail.nodeType === 3 || detail.nodeType === 8) && detail.liveDOM)
-        detail.liveDOM.data = detail.kind === "comment"
+    if ((detail.nodeType === 3 || detail.nodeType === 8) && detail.liveNode)
+        detail.liveNode.data = detail.kind === "comment"
             ? detail.value.slice(4, detail.value.endsWith("-->") ? -3 : undefined)
             : detail.value;
 }
@@ -79,7 +80,7 @@ function addDetail(detail, details, editor) {
         if (value !== null) {
             parent.setAttribute(detail.name, value);
             const attribute = parent.getAttributeNode(detail.name);
-            if (attribute) bindEditorDetailsLiveDOM(detail, attribute);
+            if (attribute) bindEditorNode(detail, attribute);
         }
         return;
     }
@@ -91,7 +92,7 @@ function addDetail(detail, details, editor) {
     if (!node) return;
     const before = nextLiveSibling(details, detail, parent);
     if (parent) parent.insertBefore(node, before);
-    bindEditorDetailsLiveDOM(detail, node);
+    bindEditorNode(detail, node);
 }
 
 /**
@@ -99,7 +100,7 @@ function addDetail(detail, details, editor) {
  * This is an internal update step, not a user-facing editor API.
  */
 export function renderEditor(editor, { editorDetails, removed = [], edited = [], added = [] }) {
-    if (!editorDetails.some(detail => detail.liveDOM) && !editor?.editor?.liveDOM && !editor?.liveDOM)
+    if (!editorDetails.some(detail => detail.liveNode) && !editor?.editor?.liveNode && !editor?.liveNode)
         return;
     const removals = removed.map(item => item.detail || item)
         .sort((a, b) => depth(b) - depth(a));

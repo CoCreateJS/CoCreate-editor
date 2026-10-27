@@ -1,13 +1,13 @@
 import parseCode, { loadCodeLanguage, normalizeCodeLanguage, resolveCodeLanguage } from "./parsers/code.js";
 import { createLanguageDetails } from "./parsers/language/createLanguageDetails.js";
-import { bindEditorDetailsLiveDOM, createEditorDetailsFromRecords } from "./utilities/createEditorDetails.js";
+import { bindEditorNode, createEditorsFromRecords } from "./utilities/createEditor.js";
 import { getSelection as readSelection, setSelection as restoreSelection } from "../selection.js";
 
 /** Build code editor state using the selected language parser. */
 export async function createCodeEditor(source, language, editor = null) {
     language = resolveCodeLanguage(source, language);
     const parser = await loadCodeLanguage(language);
-    const parse = value => createEditorDetailsFromRecords(parser
+    const parse = value => createEditorsFromRecords(parser
         ? parser.parseCode(value)
         : createLanguageDetails(value, language, []), editor);
     return {
@@ -15,7 +15,7 @@ export async function createCodeEditor(source, language, editor = null) {
         language,
         source,
         details: parse(source, editor),
-        editor,
+        element: editor,
         update: (details, update, context = {}) => updateCodeEditorDetails(details, update, {
             editor: context.editor || editor,
             parse
@@ -34,11 +34,11 @@ export function renderEditor(element, source, details) {
             const text = document.createTextNode(detail.value);
             span.append(text);
             code.append(span);
-            bindEditorDetailsLiveDOM(detail, text);
+            bindEditorNode(detail, text);
         } else {
             const text = document.createTextNode(detail.value);
             code.append(text);
-            bindEditorDetailsLiveDOM(detail, text);
+            bindEditorNode(detail, text);
         }
     }
     // Keep the caret on a visible empty line after a terminal source newline.

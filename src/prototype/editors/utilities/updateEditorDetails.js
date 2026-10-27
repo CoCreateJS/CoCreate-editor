@@ -1,5 +1,5 @@
 import { detailsToSource, planDetailsEdit } from "./lengthEditorDetails.js";
-import { bindEditorDetails } from "./createEditorDetails.js";
+import { bindEditor } from "./createEditor.js";
 import { renderEditor } from "./renderEditor.js";
 
 function normalizeUpdate(update) {
@@ -59,8 +59,8 @@ export function applyEditorDetailsPlan(details, plan, { render = renderEditor, e
         details.length = 0;
         for (const detail of plan.nextDetails) details.push(detail);
     }
-    for (const detail of plan.added) bindEditorDetails(detail, details);
-    editor ||= details[0]?.editor || plan.removed[0]?.detail.editor || plan.added[0]?.editor;
+    for (const detail of plan.added) bindEditor(detail, details);
+    editor ||= details[0]?.element || plan.removed[0]?.detail.element || plan.added[0]?.element;
     const rendered = render(editor, { ...plan, editorDetails: details });
 
     return {

@@ -1,62 +1,62 @@
 /**
- * Constructor for the experimental length-only editor-detail records.
+ * Constructor for one editor object in the experimental length-only model.
  *
  * Parsers supply the semantic fields (`kind`, `nodeType`, `value`, and
- * `parentDetails`). This module owns record invariants and shared behavior so
- * parsers do not need to know how editor-detail objects are assembled.
+ * `parentNode`). This module owns record invariants and shared behavior so
+ * parsers do not need to know how editor objects are assembled.
  */
 
-export const editorDetailsPrototype = Object.create(null);
-export const elementEditorDetailsPrototype = Object.create(editorDetailsPrototype);
-const collectionsByDetail = new WeakMap();
-const detailsByLiveDOM = new WeakMap();
+export const editorPrototype = Object.create(null);
+export const elementEditorPrototype = Object.create(editorPrototype);
+const collectionsByEditor = new WeakMap();
+const editorsByNode = new WeakMap();
 
-export const getEditorDetailsForNode = node => detailsByLiveDOM.get(node);
+export const getEditorForNode = node => node?.editor || editorsByNode.get(node);
 
 const validAttributeName = /^[A-Za-z_:][\w:.-]*$/;
 
-function submitUpdate(detail, update) {
-    const editor = detail.editor?.editor || detail.editor;
-    if (typeof editor?.updateText !== "function")
+function submitUpdate(editor, update) {
+    const root = editor.element?.editor || editor.element;
+    if (typeof root?.updateText !== "function")
         throw new Error("The editor element does not expose editor.updateText().");
-    return editor.updateText(update);
+    return root.updateText(update);
 }
 
-function attributeDetail(elementDetails, name, nativeAttribute) {
+function attributeEditor(elementEditor, name, nativeAttribute) {
     if (typeof name !== "string" || !validAttributeName.test(name))
         throw new TypeError("Attribute operations require a valid HTML attribute name.");
-    const liveElement = elementDetails.liveDOM;
+    const liveElement = elementEditor.liveNode;
     if (!liveElement || typeof liveElement.getAttributeNode !== "function")
         throw new Error("Element detail is not attached to a live DOM element.");
     const attribute = nativeAttribute || liveElement.getAttributeNode(name);
     if (!attribute) return null;
 
-    let detail = detailsByLiveDOM.get(attribute);
-    const collection = collectionsByDetail.get(elementDetails);
-    if (!detail && collection) {
-        detail = collection.find(item => item.kind === "attribute" &&
-            item.parentDetails === elementDetails &&
+    let editor = getEditorForNode(attribute);
+    const collection = collectionsByEditor.get(elementEditor);
+    if (!editor && collection) {
+        editor = collection.find(item => item.kind === "attribute" &&
+            item.parentNode === elementEditor &&
             item.name?.toLowerCase() === attribute.name.toLowerCase());
-        if (detail) bindEditorDetailsLiveDOM(detail, attribute);
+        if (editor) bindEditorNode(editor, attribute);
     }
-    return detail || null;
+    return editor || null;
 }
 
-Object.assign(editorDetailsPrototype, {
+Object.assign(editorPrototype, {
     getStart() {
-        const collection = collectionsByDetail.get(this);
-        if (!collection) throw new Error("Editor detail is not attached to a details collection.");
+        const collection = collectionsByEditor.get(this);
+        if (!collection) throw new Error("Editor is not attached to an ordered editor collection.");
         let start = 0;
         for (const detail of collection) {
             if (detail === this) return start;
             start += detail.length;
         }
-        throw new Error("Editor detail is no longer present in its details collection.");
+        throw new Error("Editor is no longer present in its ordered collection.");
     },
     updateText({ start = 0, length = 0, value }) {
         if (!Number.isInteger(start) || !Number.isInteger(length) || start < 0 || length < 0 ||
             start + length > this.length || typeof value !== "string")
-            throw new RangeError("Detail update must be a valid range within this value and include a string value.");
+            throw new RangeError("Editor update must be a valid range within this value and include a string value.");
         return submitUpdate(this, { start: this.getStart() + start, length, value });
     },
     setValue(value) {
@@ -67,23 +67,23 @@ Object.assign(editorDetailsPrototype, {
     }
 });
 
-Object.assign(elementEditorDetailsPrototype, {
-    /** Return the matching attribute detail, or null when the attribute is absent. */
+Object.assign(elementEditorPrototype, {
+    /** Return the matching attribute editor, or null when the attribute is absent. */
     getAttribute(name) {
-        return attributeDetail(this, name);
+        return attributeEditor(this, name);
     },
     setAttribute(name, value) {
         if (value == null) return this.removeAttribute(name);
         if (typeof name !== "string" || !validAttributeName.test(name))
             throw new TypeError("Attribute operations require a valid HTML attribute name.");
-        if (!this.liveDOM || typeof this.liveDOM.getAttributeNode !== "function")
+        if (!this.liveNode || typeof this.liveNode.getAttributeNode !== "function")
             throw new Error("Element detail is not attached to a live DOM element.");
         const text = String(value).replace(/&/g, "&amp;").replace(/"/g, "&quot;");
-        const nativeAttribute = this.liveDOM?.getAttributeNode(name);
+        const nativeAttribute = this.liveNode?.getAttributeNode(name);
         if (nativeAttribute) {
-            const detail = attributeDetail(this, name, nativeAttribute);
-            if (!detail) throw new Error(`No editor detail is attached to attribute "${name}".`);
-            return detail.setValue(`${nativeAttribute.name}="${text}"`);
+            const editor = attributeEditor(this, name, nativeAttribute);
+            if (!editor) throw new Error(`No editor is attached to attribute "${name}".`);
+            return editor.setValue(`${nativeAttribute.name}="${text}"`);
         }
         return this.updateText({
             start: this.length,
@@ -94,15 +94,15 @@ Object.assign(elementEditorDetailsPrototype, {
     removeAttribute(name) {
         if (typeof name !== "string" || !validAttributeName.test(name))
             throw new TypeError("Attribute operations require a valid HTML attribute name.");
-        if (!this.liveDOM || typeof this.liveDOM.getAttributeNode !== "function")
+        if (!this.liveNode || typeof this.liveNode.getAttributeNode !== "function")
             throw new Error("Element detail is not attached to a live DOM element.");
-        const nativeAttribute = this.liveDOM?.getAttributeNode(name);
+        const nativeAttribute = this.liveNode?.getAttributeNode(name);
         if (!nativeAttribute) return;
-        const detail = attributeDetail(this, name, nativeAttribute);
-        if (!detail) throw new Error(`No editor detail is attached to attribute "${name}".`);
-        const collection = collectionsByDetail.get(this);
+        const editor = attributeEditor(this, name, nativeAttribute);
+        if (!editor) throw new Error(`No editor is attached to attribute "${name}".`);
+        const collection = collectionsByEditor.get(this);
         const matching = collection?.filter(item => item.kind === "attribute" &&
-            item.parentDetails === this && item.name.toLowerCase() === name.toLowerCase());
+            item.parentNode === this && item.name.toLowerCase() === name.toLowerCase());
         if (matching?.length > 1) {
             const first = matching[0], last = matching.at(-1), unwanted = new Set(matching);
             const between = collection.slice(collection.indexOf(first), collection.indexOf(last) + 1);
@@ -110,42 +110,50 @@ Object.assign(elementEditorDetailsPrototype, {
                 length: between.reduce((length, item) => length + item.length, 0),
                 value: between.filter(item => !unwanted.has(item)).map(item => item.value).join("") });
         }
-        return detail.remove();
+        return editor.remove();
     }
 });
 
-/** Bind an existing detail to the ordered array whose cumulative range it uses. */
-export function bindEditorDetails(detail, collection) {
-    if (!detail || typeof detail !== "object")
-        throw new TypeError("Editor detail must be an object.");
+/** Bind an editor object to the ordered collection whose cumulative range it uses. */
+export function bindEditor(editor, collection) {
+    if (!editor || typeof editor !== "object")
+        throw new TypeError("Editor must be an object.");
     if (!Array.isArray(collection))
-        throw new TypeError("Editor details collection must be an array.");
-    collectionsByDetail.set(detail, collection);
-    return detail;
+        throw new TypeError("Editor collection must be an array.");
+    collectionsByEditor.set(editor, collection);
+    return editor;
 }
 
-/** Associate a detail with its local live DOM node (an Element or Attr). */
-export function bindEditorDetailsLiveDOM(detail, node) {
-    if (!detail || typeof detail !== "object")
-        throw new TypeError("Editor detail must be an object.");
+/** Associate an editor object with a live or detached DOM node. */
+export function bindEditorNode(editor, node, property = "liveNode") {
+    if (!editor || typeof editor !== "object")
+        throw new TypeError("Editor must be an object.");
     if (!node || typeof node !== "object")
-        throw new TypeError("Live DOM reference must be an object.");
-    detail.liveDOM = node;
-    detailsByLiveDOM.set(node, detail);
-    return detail;
+        throw new TypeError("DOM node reference must be an object.");
+    if (property !== "liveNode" && property !== "detachedNode")
+        throw new TypeError('Editor node property must be "liveNode" or "detachedNode".');
+    const previous = editor[property];
+    if (previous && previous !== node && previous.editor === editor) {
+        editorsByNode.delete(previous);
+        delete previous.editor;
+    }
+    editor[property] = node;
+    editorsByNode.set(node, editor);
+    node.editor = editor;
+    return editor;
 }
 
 /** Sum cached segment lengths to get the source length represented by a list. */
-export function getEditorDetailsLength(details) {
-    if (!Array.isArray(details)) throw new TypeError("Editor details must be an array.");
+export function getEditorsLength(details) {
+    if (!Array.isArray(details)) throw new TypeError("Editors must be an array.");
     let length = 0;
     for (const detail of details) length += detail.length;
     return length;
 }
 
 /** Locate the detail containing a source offset by accumulating segment lengths. */
-export function findEditorDetailIndex(details, offset, { bias = "right" } = {}) {
-    if (!Array.isArray(details)) throw new TypeError("Editor details must be an array.");
+export function findEditorIndex(details, offset, { bias = "right" } = {}) {
+    if (!Array.isArray(details)) throw new TypeError("Editors must be an array.");
     if (!Number.isInteger(offset) || offset < 0)
         throw new RangeError("Offset must be a non-negative integer.");
     if (bias !== "left" && bias !== "right")
@@ -166,18 +174,18 @@ export function findEditorDetailIndex(details, offset, { bias = "right" } = {}) 
     return offset === cursor && bias === "left" ? previous : -1;
 }
 
-export function findEditorDetailAt(details, offset, options) {
-    const index = findEditorDetailIndex(details, offset, options);
+export function findEditorAt(details, offset, options) {
+    const index = findEditorIndex(details, offset, options);
     return index < 0 ? undefined : details[index];
 }
 
 /** Return the details intersecting a half-open source range. */
-export function findEditorDetailsInRange(details, start, end = start) {
-    if (!Array.isArray(details)) throw new TypeError("Editor details must be an array.");
+export function findEditorsInRange(details, start, end = start) {
+    if (!Array.isArray(details)) throw new TypeError("Editors must be an array.");
     if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start)
         throw new RangeError("Expected a valid half-open source range.");
-    if (end > getEditorDetailsLength(details))
-        throw new RangeError("Range extends past the editor details.");
+    if (end > getEditorsLength(details))
+        throw new RangeError("Range extends past the editor collection.");
 
     const matches = [];
     let cursor = 0;
@@ -198,39 +206,39 @@ export function findEditorDetailsInRange(details, start, end = start) {
  * Create one detail record and optionally append it to an ordered collection.
  * The caller determines source order; positions are intentionally not stored.
  */
-export function createEditorDetails(data, collection, { dom = data?.dom === true } = {}) {
+export function createEditor(data, collection, { dom = data?.dom === true } = {}) {
     if (!data || typeof data !== "object")
-        throw new TypeError("Editor detail data must be an object.");
+        throw new TypeError("Editor data must be an object.");
     if (typeof data.value !== "string")
-        throw new TypeError("Editor detail value must be a string.");
+        throw new TypeError("Editor value must be a string.");
     if (collection !== undefined && !Array.isArray(collection))
-        throw new TypeError("Editor details collection must be an array.");
+        throw new TypeError("Editor collection must be an array.");
 
     const prototype = dom && data.nodeType === 1 && data.kind === "element"
-        ? elementEditorDetailsPrototype
-        : editorDetailsPrototype;
-    const detail = Object.assign(Object.create(prototype), data, {
+        ? elementEditorPrototype
+        : editorPrototype;
+    const editor = Object.assign(Object.create(prototype), data, {
         length: data.value.length,
-        editor: data.editor || null,
-        liveDOM: data.liveDOM || null,
-        detachedDOM: data.detachedDOM || null,
-        parentDetails: data.parentDetails || null
+        element: data.element || null,
+        liveNode: data.liveNode || null,
+        detachedNode: data.detachedNode || null,
+        parentNode: data.parentNode || null
     });
     if (collection) {
-        collection.push(detail);
-        bindEditorDetails(detail, collection);
+        collection.push(editor);
+        bindEditor(editor, collection);
     }
-    return detail;
+    return editor;
 }
 
 /** Create an ordered collection with a record-construction method. */
-export function createEditorDetailsCollection({ editor = null, dom = false } = {}) {
+export function createEditorCollection({ element = null, dom = false } = {}) {
     const details = [];
     return {
         details,
         dom,
         add(data) {
-            return createEditorDetails({ ...data, editor: data.editor || editor }, details, { dom });
+            return createEditor({ ...data, element: data.element || element }, details, { dom });
         },
         toArray() {
             return details;
@@ -239,17 +247,17 @@ export function createEditorDetailsCollection({ editor = null, dom = false } = {
 }
 
 /** Convert plain parser records into editor-owned details only when needed. */
-export function createEditorDetailsFromRecords(records, editor = null, { dom = false } = {}) {
+export function createEditorsFromRecords(records, element = null, { dom = false } = {}) {
     if (!Array.isArray(records)) throw new TypeError("Parser records must be an array.");
     const details = [];
     const references = new WeakMap();
     for (const record of records) {
-        const data = { ...record, editor,
-            parentDetails: references.get(record.parentDetails) || null };
-        const detail = createEditorDetails(data, details, { dom });
-        references.set(record, detail);
+        const data = { ...record, element,
+            parentNode: references.get(record.parentNode) || null };
+        const editor = createEditor(data, details, { dom });
+        references.set(record, editor);
     }
     return details;
 }
 
-export default createEditorDetails;
+export default createEditor;

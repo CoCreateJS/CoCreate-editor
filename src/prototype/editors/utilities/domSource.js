@@ -1,4 +1,4 @@
-import { getEditorDetailsForNode } from "./createEditorDetails.js";
+import { getEditorForNode } from "./createEditor.js";
 import { textChange } from "../../textChange.js";
 
 const states = new WeakMap();
@@ -48,7 +48,7 @@ export function releaseDOMSource(element) {
 
 function localText(detail) {
     const raw = detail.value, before = detail.renderValue ?? raw;
-    const after = detail.liveDOM?.nodeType === 3 ? detail.liveDOM.data : before;
+    const after = detail.liveNode?.nodeType === 3 ? detail.liveNode.data : before;
     const oldOffset = offset => sourceOffset(detail, offset);
     if (before === after) return { value: raw, offset: oldOffset };
     const change = textChange(before, after);
@@ -114,15 +114,15 @@ export function getDOMSource(element, event, selection) {
         if (state.mutations) state.mutations.length = 0;
         for (const record of mutations) {
             if (record.type === "characterData") {
-                const detail = getEditorDetailsForNode(record.target);
+                const detail = getEditorForNode(record.target);
                 if (detail?.kind === "text" && !detail.sourceOnly) state.nativeText.add(detail);
             }
             for (const node of record.addedNodes || [])
-                if (!getEditorDetailsForNode(node) && element.contains(node) && !state.nativeNodes.includes(node)) state.nativeNodes.push(node);
+                if (!getEditorForNode(node) && element.contains(node) && !state.nativeNodes.includes(node)) state.nativeNodes.push(node);
         }
         for (let node of [native?.anchorNode, native?.focusNode]) {
             let extra = null;
-            while (node && node !== element && !getEditorDetailsForNode(node)) { extra = node; node = node.parentNode; }
+            while (node && node !== element && !getEditorForNode(node)) { extra = node; node = node.parentNode; }
             if (extra && element.contains(extra) && !state.nativeNodes.includes(extra)) state.nativeNodes.push(extra);
         }
         return before.slice(0, selection.start) + value + before.slice(selection.end);
@@ -184,8 +184,8 @@ export function prepareDOMRender(element, plan) {
     for (const node of state?.nativeNodes || []) node.remove();
     const changed = new Set([...plan.edited.map(item => item.detail), ...plan.removed.map(item => item.detail || item)]);
     for (const detail of state?.nativeText || []) {
-        if (!changed.has(detail) && detail.liveDOM?.nodeType === 3 && typeof detail.renderValue === "string")
-            detail.liveDOM.data = detail.renderValue;
+        if (!changed.has(detail) && detail.liveNode?.nodeType === 3 && typeof detail.renderValue === "string")
+            detail.liveNode.data = detail.renderValue;
     }
     if (state) { state.nativeNodes = []; state.nativeText = null; }
 }
@@ -193,7 +193,7 @@ export function prepareDOMRender(element, plan) {
 function endOf(detail, details) {
     let position = 0, end = 0;
     for (const item of details) {
-        for (let owner = item; owner; owner = owner.parentDetails) {
+        for (let owner = item; owner; owner = owner.parentNode) {
             if (owner === detail) { end = position + item.length; break; }
         }
         position += item.length;
@@ -213,13 +213,13 @@ export function getDOMSelection(element, range) {
         const placeholder = previous?.hasAttribute?.(breakPlaceholder) ? previous
             : next?.hasAttribute?.(breakPlaceholder) ? next : null;
         if (placeholder) return Number(placeholder.getAttribute(breakPlaceholder));
-        const detail = getEditorDetailsForNode(node);
+        const detail = getEditorForNode(node);
         if (node.nodeType === 3 && state.details.includes(detail)) return detail.getStart() + localText(detail).offset(offset);
-        const nextDetail = getEditorDetailsForNode(next), previousDetail = getEditorDetailsForNode(previous);
+        const nextDetail = getEditorForNode(next), previousDetail = getEditorForNode(previous);
         if (state.details.includes(nextDetail)) return nextDetail.getStart();
         if (state.details.includes(previousDetail)) return endOf(previousDetail, state.details);
         if (state.details.includes(detail)) {
-            const ending = state.details.find(item => item.parentDetails === detail && item.kind === "markup");
+            const ending = state.details.find(item => item.parentNode === detail && item.kind === "markup");
             return ending ? ending.getStart() + ending.length : detail.getStart() + detail.length;
         }
         return offset ? sourceOf(state.details).length : 0;
@@ -251,7 +251,7 @@ export function setDOMSelection(element, source) {
             return [element, element.childNodes.length];
         let position = 0, previous = null, empty = null;
         for (const detail of state.details) {
-            const node = detail.liveDOM;
+            const node = detail.liveNode;
             if (detail.kind === "element" && detail.tag === "br" && node?.parentNode &&
                 offset === endOf(detail, state.details)) {
                 const siblings = [...node.parentNode.childNodes];

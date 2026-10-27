@@ -1,10 +1,10 @@
 /**
- * Experimental HTML source tokenizer for the length-only editor-details model.
+ * Experimental HTML source tokenizer for the length-only editor model.
  *
  * This is not the production renderer and does not create DOM nodes. It emits
  * a flat, ordered list of source segments. Every source character belongs to
  * exactly one segment, so joining `value` fields reproduces the input.
- * `parentDetails` links lexical segments to the nearest open element record;
+ * `parentNode` links lexical segments to the nearest open element record;
  * those references are local derived state, not shared DOM references.
  * Text content stays in contiguous runs. Whitespace inside an opening tag is
  * also a text detail, marked `sourceOnly`: it contributes length but has no
@@ -25,7 +25,7 @@ const whitespace = /[\t\n\f\r ]/;
 export { isVoidElement };
 
 function createRecordFactory(collection) {
-    const record = (kind, value, parentDetails, extra = {}) => collection.add({
+    const record = (kind, value, parentNode, extra = {}) => collection.add({
         kind,
         nodeType: kind === "element" ? 1
             : kind === "attribute" ? 2
@@ -34,7 +34,7 @@ function createRecordFactory(collection) {
                     : null,
         ...(kind === "markup" || kind === "elementEnd" ? { sourceOnly: true } : {}),
         value,
-        parentDetails: parentDetails || null,
+        parentNode: parentNode || null,
         ...extra
     });
     record.details = collection.details;
@@ -83,20 +83,20 @@ function readAttributeEnd(source, start, limit) {
     return Math.max(index, nameEnd);
 }
 
-function pushText(record, source, start, end, parentDetails) {
+function pushText(record, source, start, end, parentNode) {
     if (end <= start) return;
     const value = source.slice(start, end);
     const previous = record.details.at(-1);
-    if (previous?.kind === "text" && !previous.sourceOnly && previous.parentDetails === parentDetails) {
+    if (previous?.kind === "text" && !previous.sourceOnly && previous.parentNode === parentNode) {
         previous.value += value;
         previous.length = previous.value.length;
         Object.assign(previous, getPotentialDOMTagFlags(previous.value));
-    } else record("text", value, parentDetails, getPotentialDOMTagFlags(value));
+    } else record("text", value, parentNode, getPotentialDOMTagFlags(value));
 }
 
-function pushRawMarkup(record, source, start, end, parentDetails, kind = "markup", complete = true) {
+function pushRawMarkup(record, source, start, end, parentNode, kind = "markup", complete = true) {
     const value = source.slice(start, end);
-    record(kind, value, parentDetails, { complete });
+    record(kind, value, parentNode, { complete });
 }
 
 /** Parse DOM/HTML source into flat, position-free source records. */

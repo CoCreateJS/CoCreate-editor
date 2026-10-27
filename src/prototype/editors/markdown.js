@@ -1,13 +1,13 @@
 import parseMarkdown from "./parsers/markdown.js";
-import { bindEditorDetailsLiveDOM, createEditorDetailsFromRecords } from "./utilities/createEditorDetails.js";
+import { bindEditorNode, createEditorsFromRecords } from "./utilities/createEditor.js";
 
 const renderedState = new WeakMap();
 const isVisibleText = detail => ["text", "codeText", "whitespace", "tab", "lineBreak"].includes(detail.kind);
 
 /** Build Markdown editor state from source and its flat detail records. */
 export async function createMarkdownEditor(source, editor = null) {
-    const details = createEditorDetailsFromRecords(await parseMarkdown(source), editor);
-    return { type: "markdown", source, details, editor,
+    const details = createEditorsFromRecords(await parseMarkdown(source), editor);
+    return { type: "markdown", source, details, element: editor,
         update: updateMarkdownEditorDetails };
 }
 
@@ -19,7 +19,7 @@ function appendSourceText(parent, detail) {
         span.append(text);
         parent.append(span);
     } else parent.append(text);
-    bindEditorDetailsLiveDOM(detail, text);
+    bindEditorNode(detail, text);
 }
 
 function appendInline(parent, records, heading = false, listItem = false, lineBreakMode = "skip") {
@@ -34,7 +34,7 @@ function appendInline(parent, records, heading = false, listItem = false, lineBr
         if (syntax === "image-close") { skipImageText = false; continue; }
         if (skipImageText) continue;
         if (detail.kind === "element" && /^h[1-6]$/.test(detail.tag || "")) {
-            bindEditorDetailsLiveDOM(detail, parent);
+            bindEditorNode(detail, parent);
             continue;
         }
         if (skipHeadingSpace && detail.kind === "whitespace") {
@@ -100,12 +100,12 @@ function appendInline(parent, records, heading = false, listItem = false, lineBr
                     } else {
                         const br = parent.ownerDocument.createElement("br");
                         stack.at(-1).append(br);
-                        bindEditorDetailsLiveDOM(detail, br);
+                        bindEditorNode(detail, br);
                     }
                 } else {
                     const text = parent.ownerDocument.createTextNode(" ");
                     stack.at(-1).append(text);
-                    bindEditorDetailsLiveDOM(detail, text);
+                    bindEditorNode(detail, text);
                 }
             }
             continue;
@@ -376,17 +376,17 @@ export function renderEditor(element, source, details) {
         line.setAttribute("data-markdown-placeholder", "");
         placeholder.append(line);
         root.append(placeholder);
-        if (trailingBreak) bindEditorDetailsLiveDOM(trailingBreak, placeholder);
+        if (trailingBreak) bindEditorNode(trailingBreak, placeholder);
     }
     element.replaceChildren(...root.childNodes);
 
     const textDetails = new WeakMap();
     const nodeDetails = new WeakMap();
     for (const detail of details) {
-        if (detail.liveDOM) {
-            nodeDetails.set(detail.liveDOM, detail);
-            if (detail.liveDOM.nodeType === 3 && isVisibleText(detail))
-                textMappings.push({ node: detail.liveDOM, detail,
+        if (detail.liveNode) {
+            nodeDetails.set(detail.liveNode, detail);
+            if (detail.liveNode.nodeType === 3 && isVisibleText(detail))
+                textMappings.push({ node: detail.liveNode, detail,
                     sourceStart: starts.get(detail), length: detail.length });
         }
     }
@@ -529,10 +529,10 @@ export function setSelection(element, { start, end = start, anchor = start, head
     const point = offset => {
         let previous = null;
         for (const detail of state.details) {
-            if (detail.kind === "lineBreak" && detail.liveDOM &&
+            if (detail.kind === "lineBreak" && detail.liveNode &&
                 state.starts.get(detail) + detail.length === offset &&
-                detail.liveDOM.hasAttribute("data-markdown-placeholder-block"))
-                return [detail.liveDOM, 0];
+                detail.liveNode.hasAttribute("data-markdown-placeholder-block"))
+                return [detail.liveNode, 0];
         }
         for (const mapping of state.textMappings) {
             const { node, sourceStart: detailStart, length } = mapping;
@@ -547,11 +547,11 @@ export function setSelection(element, { start, end = start, anchor = start, head
         // Hidden block syntax has no text node. Put the caret at the start of
         // its rendered element so typing continues in the source content.
         for (const detail of state.details) {
-            if (detail.kind !== "element" || !/^h[1-6]$/.test(detail.tag || "") || !detail.liveDOM) continue;
-            const contentStart = pointOffset(state, element, detail.liveDOM, 0);
+            if (detail.kind !== "element" || !/^h[1-6]$/.test(detail.tag || "") || !detail.liveNode) continue;
+            const contentStart = pointOffset(state, element, detail.liveNode, 0);
             if (contentStart === offset) {
-                const text = detail.liveDOM.firstChild;
-                return text?.nodeType === 3 ? [text, 0] : [detail.liveDOM, 0];
+                const text = detail.liveNode.firstChild;
+                return text?.nodeType === 3 ? [text, 0] : [detail.liveNode, 0];
             }
         }
         if (previous) return previous;
@@ -581,7 +581,7 @@ export async function updateEditor(element, update, previousSource) {
     const source = previousSource.slice(0, start) + value + previousSource.slice(end);
     if (typeof update.string === "string" && update.string !== source)
         throw new RangeError("CRDT update does not match the previous Markdown source.");
-    const editorDetails = createEditorDetailsFromRecords(await parseMarkdown(source), element);
+    const editorDetails = createEditorsFromRecords(await parseMarkdown(source), element);
     renderEditor(element, source, editorDetails);
     return { previousSource, source, editorDetails, start, end, value };
 }

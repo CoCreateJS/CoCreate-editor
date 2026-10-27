@@ -1,16 +1,15 @@
-import { bindEditorDetailsLiveDOM } from "./createEditorDetails.js";
+import { bindEditorNode } from "./createEditor.js";
 
 const states = new WeakMap();
 const childContainer = node => node?.localName === "template" && node.content ? node.content : node;
 const breakPlaceholder = "data-cocreate-dom-break";
 
 function bind(detail, node, property) {
-    if (property === "liveDOM") bindEditorDetailsLiveDOM(detail, node);
-    else detail[property] = node;
+    bindEditorNode(detail, node, property);
 }
 
 function textValue(detail, document) {
-    if (["script", "style"].includes(detail.parentDetails?.tag) || !detail.value.includes("&")) {
+    if (["script", "style"].includes(detail.parentNode?.tag) || !detail.value.includes("&")) {
         detail.renderEntities = null;
         return detail.value;
     }
@@ -79,7 +78,7 @@ function renderRoot(root, details, property, plan) {
         starts.set(detail, sourcePosition);
         sourcePosition += detail.length;
         if (detail.sourceOnly) continue;
-        const owner = detail.parentDetails?.[property] || root;
+        const owner = detail.parentNode?.[property] || root;
         const parent = detail.kind === "attribute" ? owner : childContainer(owner);
         const nodeDocument = parent.ownerDocument || document;
         let node = detail[property];
@@ -127,7 +126,7 @@ function renderRoot(root, details, property, plan) {
     for (const detail of details) {
         if (detail.kind !== "text" || detail.sourceOnly || !/[\r\n]$/.test(detail.value)) continue;
         const node = detail[property];
-        const parent = childContainer(detail.parentDetails?.[property] || root);
+        const parent = childContainer(detail.parentNode?.[property] || root);
         const ordered = children.get(parent);
         if (!node || ordered?.at(-1) !== node) continue;
         const placeholder = document.createElement("br");
@@ -141,8 +140,8 @@ function renderRoot(root, details, property, plan) {
     // This BR is projection-only so the source and CRDT remain unchanged.
     const lastDetail = details.at(-1);
     const lastElement = lastDetail?.kind === "elementEnd" &&
-        lastDetail.parentDetails && !lastDetail.parentDetails.parentDetails
-        ? lastDetail.parentDetails : null;
+        lastDetail.parentNode && !lastDetail.parentNode.parentNode
+        ? lastDetail.parentNode : null;
     const rootChildren = children.get(host);
     if (lastElement?.[property] && rootChildren?.at(-1) === lastElement[property]) {
         const placeholder = document.createElement("br");
@@ -192,12 +191,13 @@ function renderRoot(root, details, property, plan) {
 /** Materialize a committed details array through references, without querying either tree. */
 export function renderDOM(editor, plan) {
     const { editorDetails } = plan;
-    const live = editor?.editor?.liveDOM || editor?.liveDOM || (editor?.nodeType ? editor : null);
-    const detached = editor?.editor?.detachedDOM || editor?.detachedDOM;
+    const live = editor?.editor?.liveNode || editor?.editor?.element || editor?.liveNode ||
+        (editor?.nodeType ? editor : null);
+    const detached = editor?.editor?.detachedNode || editor?.detachedNode;
     const result = {};
-    if (live?.ownerDocument) result.liveDOM = renderRoot(live, editorDetails, "liveDOM", plan);
+    if (live?.ownerDocument) result.liveNode = renderRoot(live, editorDetails, "liveNode", plan);
     if (detached?.ownerDocument && detached !== live)
-        result.detachedDOM = renderRoot(detached, editorDetails, "detachedDOM", plan);
+        result.detachedNode = renderRoot(detached, editorDetails, "detachedNode", plan);
     return result;
 }
 

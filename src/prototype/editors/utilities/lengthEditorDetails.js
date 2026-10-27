@@ -11,16 +11,16 @@
  */
 
 import {
-    createEditorDetails,
-    findEditorDetailIndex as findDetailIndex,
-    findEditorDetailsInRange as findDetailsInRange,
-    getEditorDetailsLength
-} from "./createEditorDetails.js";
+    createEditor,
+    findEditorIndex as findDetailIndex,
+    findEditorsInRange as findDetailsInRange,
+    getEditorsLength
+} from "./createEditor.js";
 
 export {
     findDetailIndex,
     findDetailsInRange,
-    getEditorDetailsLength as getDetailsLength
+    getEditorsLength as getDetailsLength
 };
 
 function assertRecord(record, index) {
@@ -37,12 +37,12 @@ function assertRecords(records) {
 }
 
 function textRecord(value, template) {
-    return createEditorDetails({
+    return createEditor({
         kind: "text",
         nodeType: 3,
         value,
-        editor: template?.editor || null,
-        parentDetails: template?.parentDetails || null
+        element: template?.element || null,
+        parentNode: template?.parentNode || null
     });
 }
 

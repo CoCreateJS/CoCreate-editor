@@ -10,7 +10,7 @@ function indexDetails(details) {
     let position = 0;
     for (let index = 0; index < details.length; index++) {
         const detail = details[index];
-        const root = detail.parentDetails ? roots.get(detail.parentDetails) || detail.parentDetails : detail;
+        const root = detail.parentNode ? roots.get(detail.parentNode) || detail.parentNode : detail;
         roots.set(detail, root);
         const range = { detail, index, start: position, end: position + detail.length };
         ranges.push(range);
@@ -23,7 +23,7 @@ function indexDetails(details) {
     }
     for (let index = ranges.length - 1; index >= 0; index--) {
         const range = ranges[index];
-        const parent = subtrees.get(range.detail.parentDetails);
+        const parent = subtrees.get(range.detail.parentNode);
         if (!parent) continue;
         const child = subtrees.get(range.detail) || { end: range.end, endIndex: index + 1 };
         parent.end = Math.max(parent.end, child.end);
@@ -34,17 +34,17 @@ function indexDetails(details) {
 
 function sharedContainer(first, last) {
     const parents = new Set();
-    for (let detail = last?.kind === "element" ? last : last?.parentDetails; detail; detail = detail.parentDetails)
+    for (let detail = last?.kind === "element" ? last : last?.parentNode; detail; detail = detail.parentNode)
         parents.add(detail);
-    for (let detail = first?.kind === "element" ? first : first?.parentDetails; detail; detail = detail.parentDetails)
+    for (let detail = first?.kind === "element" ? first : first?.parentNode; detail; detail = detail.parentNode)
         if (parents.has(detail)) return detail;
     return null;
 }
 
 function needsMoreContext(parsed) {
     const closed = new Set(parsed.filter(detail => detail.kind === "elementEnd" &&
-        detail.tag === detail.parentDetails?.tag).map(detail => detail.parentDetails));
-    if (parsed.some(detail => detail.kind === "element" && !detail.parentDetails &&
+        detail.tag === detail.parentNode?.tag).map(detail => detail.parentNode));
+    if (parsed.some(detail => detail.kind === "element" && !detail.parentNode &&
         !detail.selfClosing && !isVoidElement(detail.tag) && !closed.has(detail))) return true;
     const last = parsed.at(-1);
     return last?.complete === false || (last?.kind === "text" && last.value.includes("<"));
@@ -55,7 +55,7 @@ function keepsContainer(parsed, container) {
     if (root?.kind !== "element" || signature(root) !== signature(container)) return false;
     const roots = new Map();
     for (const detail of parsed) {
-        const owner = detail.parentDetails ? roots.get(detail.parentDetails) : detail;
+        const owner = detail.parentNode ? roots.get(detail.parentNode) : detail;
         roots.set(detail, owner);
         if (owner !== root) return false;
     }
@@ -120,7 +120,7 @@ function planTextEdit(details, start, end, value) {
 }
 
 /** Stage a source edit using cumulative lengths; neither records nor DOM are mutated. */
-export function planDOMEdit(details, start, end, value, { parse = parseDOM, editor = details[0]?.editor || null,
+export function planDOMEdit(details, start, end, value, { parse = parseDOM, editor = details[0]?.element || null,
     previousSource: suppliedSource, source: suppliedNextSource } = {}) {
     const previousSource = suppliedSource ?? detailsToSource(details);
     if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || end > previousSource.length)
@@ -178,18 +178,18 @@ export function planDOMEdit(details, start, end, value, { parse = parseDOM, edit
         const extent = subtrees.get(container);
         if (!extent) { container = null; break; }
         ({ start: parseStart, end: parseEnd, startIndex: fromIndex, endIndex: toIndex } = extent);
-        externalParent = container.parentDetails;
+        externalParent = container.parentNode;
         parseSource = fragment();
         parsed = parse(parseSource, editor);
         const ancestors = new Set();
-        for (let parent = externalParent; parent; parent = parent.parentDetails) ancestors.add(parent.tag);
+        for (let parent = externalParent; parent; parent = parent.parentNode) ancestors.add(parent.tag);
         const closesAncestor = parsed.some(detail => detail.kind === "elementEnd" &&
-            detail.tag !== detail.parentDetails?.tag && ancestors.has(detail.tag));
+            detail.tag !== detail.parentNode?.tag && ancestors.has(detail.tag));
         const joinsText = (parsed[0]?.kind === "text" && details[fromIndex - 1]?.kind === "text") ||
             (parsed.at(-1)?.kind === "text" && details[toIndex]?.kind === "text") ||
             (!parsed.length && details[fromIndex - 1]?.kind === "text" && details[toIndex]?.kind === "text");
         if (!needsMoreContext(parsed) && !closesAncestor && !joinsText) break;
-        container = container.parentDetails;
+        container = container.parentNode;
     }
     if (!container) {
         parseStart = resolveText ? 0 : units[left]?.start ?? 0;
@@ -273,16 +273,16 @@ export function planDOMEdit(details, start, end, value, { parse = parseDOM, edit
     const edited = [], added = [];
     for (const fresh of parsed) {
         const detail = matches.get(fresh);
-        const parentDetails = matches.get(fresh.parentDetails) || externalParent || null;
+        const parentNode = matches.get(fresh.parentNode) || externalParent || null;
         if (detail === fresh) {
-            fresh.parentDetails = parentDetails;
+            fresh.parentNode = parentNode;
             added.push(fresh);
         } else {
             const changes = {};
             for (const key of ["value", "length", "kind", "nodeType", "tag", "name", "sourceOnly", "complete", "selfClosing",
                 "potentialTags", "potentialOpenTag", "potentialClosingTag"])
                 if (detail[key] !== fresh[key]) changes[key] = fresh[key];
-            if (detail.parentDetails !== parentDetails) changes.parentDetails = parentDetails;
+            if (detail.parentNode !== parentNode) changes.parentNode = parentNode;
             if (Object.keys(changes).length) edited.push({ detail, value: fresh.value, changes });
         }
     }
@@ -295,7 +295,7 @@ export function planDOMEdit(details, start, end, value, { parse = parseDOM, edit
         removed,
         reparse: { start: parseStart, end: parseEnd, source: parseSource,
             anchor,
-            parentDetails: externalParent,
+            parentNode: externalParent,
             containers: container ? [container] : units.slice(left, right + 1).map(unit => unit.root) } };
 }
 

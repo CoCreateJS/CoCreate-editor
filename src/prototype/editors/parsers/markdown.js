@@ -386,7 +386,7 @@ export async function parseMarkdown(source) {
             line: lineIndex + 1,
             column: position - line.start,
             tag,
-            parentDetails: blockDetails.get(lineIndex) || null,
+            parentNode: blockDetails.get(lineIndex) || null,
             ...(syntax ? { syntax } : {}),
             ...(mark ? Object.fromEntries(Object.entries(mark).filter(([key]) =>
                 !["start", "end", "syntax", "blockKind", "kind", "tag"].includes(key))) : {}),

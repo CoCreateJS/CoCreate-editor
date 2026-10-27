@@ -9,7 +9,7 @@ function isTextField(element) {
 /** Plain text uses the native surface directly, without editor details. */
 export function createTextEditor(source, editor = null) {
     if (typeof source !== "string") throw new TypeError("Text source must be a string.");
-    return { type: "text", source, editor };
+    return { type: "text", source, element: editor };
 }
 
 export function renderEditor(element, source) {

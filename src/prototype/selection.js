@@ -2,7 +2,7 @@
 export function getSelection(element) {
     if (Number.isInteger(element?.selectionStart) && Number.isInteger(element?.selectionEnd))
         return { start: element.selectionStart, end: element.selectionEnd };
-    const root = element?.editor?.liveDOM || element;
+    const root = element?.editor?.liveNode || element;
     const selection = root?.ownerDocument?.getSelection?.();
     if (!selection?.rangeCount || !root.contains(selection.anchorNode) || !root.contains(selection.focusNode))
         return null;
@@ -30,7 +30,7 @@ export function setSelection(element, { start, end = start } = {}) {
         element.setSelectionRange(start, end);
         return true;
     }
-    const root = element?.editor?.liveDOM || element;
+    const root = element?.editor?.liveNode || element;
     const doc = root?.ownerDocument;
     if (!doc?.createTreeWalker || !doc.getSelection) return false;
     const point = offset => {

@@ -24,6 +24,7 @@ function emit(element, type, detail) {
 export function initElement(element, { force = false } = {}) {
     if (!element) return Promise.reject(new TypeError("An editor element is required."));
     element.editor ||= {};
+    element.editor.element = element;
     if (element.editor.loading) return element.editor.loading;
     if (element.editor.init && !force) return Promise.resolve(prototypeCore.getEditorDetails(element));
     element.editor.init = false;

@@ -1,6 +1,6 @@
 import parseDOM, { isVoidElement } from "./parsers/dom.js";
 import { matchCompleteDOMElements } from "./parsers/matchDOMTag.js";
-import { createEditorDetailsFromRecords } from "./utilities/createEditorDetails.js";
+import { createEditorsFromRecords } from "./utilities/createEditor.js";
 import { updateEditorDetails } from "./utilities/updateEditorDetails.js";
 import { planDOMEdit } from "./utilities/planDOMEdit.js";
 import { renderDOM } from "./utilities/renderDOM.js";
@@ -11,13 +11,13 @@ import { bindDOMSource, getDOMSource, getDOMSelection, setDOMSelection,
 /** DOM parsing and edit planning share the same length-only detail contract. */
 export function createDOMEditor(source, editor = null) {
     return { type: "dom", source,
-        details: createEditorDetailsFromRecords(parseDOM(source), editor, { dom: true }),
-        editor, update: updateDOMEditorDetails };
+        details: createEditorsFromRecords(parseDOM(source), editor, { dom: true }),
+        element: editor, update: updateDOMEditorDetails };
 }
 
-export function updateDOMEditorDetails(details, update, { editor = details[0]?.editor, parse } = {}) {
+export function updateDOMEditorDetails(details, update, { editor = details[0]?.element, parse } = {}) {
     const parseDetails = parse || (source =>
-        createEditorDetailsFromRecords(parseDOM(source), editor, { dom: true }));
+        createEditorsFromRecords(parseDOM(source), editor, { dom: true }));
     const result = updateEditorDetails(details, update, {
         editor, parse: parseDetails,
         planner: (items, start, end, value, context) => planDOMEdit(items, start, end, value,
@@ -42,13 +42,13 @@ export function updateDOMEditorDetails(details, update, { editor = details[0]?.e
                 position += detail.length;
                 return matches;
             });
-            if (target?.liveDOM) {
-                const root = editor?.editor?.liveDOM || editor?.liveDOM || editor;
+            if (target?.liveNode) {
+                const root = editor?.editor?.liveNode || editor?.liveNode || editor;
                 if (completed.contentStart === completed.contentEnd)
-                    setDOMSelectionOverride(root, target.liveDOM, completed.contentStart, 0);
-                else if (target.liveDOM.parentNode) {
-                    const parent = target.liveDOM.parentNode;
-                    const index = [...parent.childNodes].indexOf(target.liveDOM);
+                    setDOMSelectionOverride(root, target.liveNode, completed.contentStart, 0);
+                else if (target.liveNode.parentNode) {
+                    const parent = target.liveNode.parentNode;
+                    const index = [...parent.childNodes].indexOf(target.liveNode);
                     setDOMSelectionOverride(root, parent, completed.end, index + 1);
                 }
             }
