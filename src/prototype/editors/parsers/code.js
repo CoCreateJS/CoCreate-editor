@@ -1,4 +1,5 @@
 import { createLanguageDetails } from "./language/createLanguageDetails.js";
+import autoLanguageDetection from "./autoLanguageDetection.js";
 
 const languageLoaders = {
     html: () => import("./language/html.js"),
@@ -29,14 +30,30 @@ export function normalizeCodeLanguage(language) {
     return aliases[value] || value;
 }
 
-/** Select a copied language parser and return its source-preserving details. */
-export async function parseCode(source, language = "text", editor = null) {
-    if (typeof source !== "string") throw new TypeError("Code source must be a string.");
+/** Use a supported explicit label, otherwise infer from the source. */
+export function resolveCodeLanguage(source, language) {
+    const label = language == null ? "" : String(language).trim();
+    const requested = label ? normalizeCodeLanguage(label) : "";
+    if (label && requested === "text") return "text";
+    return languageLoaders[requested] ? requested : autoLanguageDetection(source);
+}
+
+/** Load one language tokenizer so editors can reuse it for source updates. */
+export async function loadCodeLanguage(language = "text") {
     language = normalizeCodeLanguage(language);
     const loader = languageLoaders[language];
-    if (!loader) return createLanguageDetails(source, language, [], editor);
-    const module = await loader();
+    return loader ? loader() : null;
+}
+
+/** Select a copied language parser and return its source-preserving details. */
+export async function parseCode(source, language, editor = null) {
+    if (typeof source !== "string") throw new TypeError("Code source must be a string.");
+    language = resolveCodeLanguage(source, language);
+    const module = await loadCodeLanguage(language);
+    if (!module) return createLanguageDetails(source, language, [], editor);
     return module.parseCode(source, editor);
 }
+
+export { autoLanguageDetection };
 
 export default parseCode;

@@ -1,4 +1,5 @@
 import { createEditorDetailsCollection } from "../utilities/createEditorDetails.js";
+import parseCodeSource, { resolveCodeLanguage } from "./code.js";
 
 const isWhitespace = character => /[ \t\f]/.test(character || "");
 
@@ -26,7 +27,10 @@ function getLines(source) {
 }
 
 function addMark(marks, start, end, syntax, blockKind = "inline", extra = {}) {
-    if (end > start) marks.push({ start, end, syntax, blockKind, ...extra });
+    if (end <= start) return null;
+    const mark = { start, end, syntax, blockKind, ...extra };
+    marks.push(mark);
+    return mark;
 }
 
 function findCloseRun(line, token, from) {
@@ -42,10 +46,32 @@ function collectSyntax(source, lines) {
     const marks = [];
     const codeRanges = [];
     const lineKinds = [];
+    const tableAlignments = new Map();
+    const tableLines = new Set();
+    const codeFences = [];
+    const cells = value => value.trim().replace(/^\|/, "").replace(/\|$/, "")
+        .split("|").map(cell => cell.trim());
+
+    for (let index = 0; index + 1 < lines.length; index++) {
+        const headerCells = cells(lines[index].text);
+        const delimiterCells = cells(lines[index + 1].text);
+        if (!lines[index].text.includes("|") || delimiterCells.length < 2 ||
+            headerCells.length !== delimiterCells.length ||
+            !delimiterCells.every(cell => /^:?-{3,}:?$/.test(cell))) continue;
+        tableLines.add(index);
+        tableLines.add(index + 1);
+        tableAlignments.set(index, delimiterCells.map(cell =>
+            cell.startsWith(":") && cell.endsWith(":") ? "center"
+                : cell.endsWith(":") ? "right" : cell.startsWith(":") ? "left" : ""));
+        let row = index + 2;
+        while (row < lines.length && lines[row].text.includes("|")) tableLines.add(row++);
+        index = row - 1;
+    }
     let fence = null;
     let previousContent = false;
 
-    for (const line of lines) {
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+        const line = lines[lineIndex];
         const { start, text } = line;
         const openFence = /^ {0,3}([~`]{3,})/.exec(text);
         if (fence) {
@@ -55,10 +81,12 @@ function collectSyntax(source, lines) {
                 const markerStart = text.search(fence.char === "`" ? /`/ : /~/);
                 const run = close[0].trimStart();
                 addMark(marks, start + markerStart, start + markerStart + run.length, "fence-close", "codeFence");
+                fence.bodyEnd = start;
                 fence = null;
                 lineKinds.push("codeFence");
             } else {
-                codeRanges.push({ start, end: line.end, kind: "codeText", blockKind: "codeFence" });
+                codeRanges.push({ start, end: line.end, kind: "codeText", blockKind: "codeFence",
+                    codeLanguage: fence.codeLanguage });
                 lineKinds.push("codeFence");
             }
             previousContent = !!text.trim();
@@ -66,15 +94,31 @@ function collectSyntax(source, lines) {
         }
         if (openFence) {
             const markerStart = text.indexOf(openFence[1]);
-            addMark(marks, start + markerStart, start + markerStart + openFence[1].length, "fence-open", "codeFence");
+            const info = text.slice(markerStart + openFence[1].length).trim();
+            const codeLanguage = info.split(/[\t ]+/, 1)[0]?.toLowerCase() || "";
+            const openMark = addMark(marks, start + markerStart, start + markerStart + openFence[1].length,
+                "fence-open", "codeFence", { codeLanguage, codeInfo: info });
             lineKinds.push("codeFence");
-            fence = { char: openFence[1][0], length: openFence[1].length };
+            fence = { char: openFence[1][0], length: openFence[1].length, codeLanguage,
+                openMark, bodyStart: line.breakEnd, bodyEnd: source.length };
+            codeFences.push(fence);
             previousContent = !!text.trim();
             continue;
         }
 
+        if (tableLines.has(lineIndex)) {
+            const delimiterCells = cells(text);
+            const isDelimiter = delimiterCells.length > 1 &&
+                delimiterCells.every(cell => /^:?-{3,}:?$/.test(cell));
+            lineKinds.push(isDelimiter ? "tableDelimiter"
+                : lineIndex > 0 && tableLines.has(lineIndex - 1) ? "tableRow" : "tableHeader");
+            continue;
+        }
+
         let blockKind = "paragraph";
-        const heading = /^ {0,3}(#{1,6})(?=[ \t]|$)/.exec(text);
+        // Keep an unfinished heading marker visible while the user is typing.
+        // A marker and delimiter become a heading only once content exists.
+        const heading = /^ {0,3}(#{1,6})(?=[ \t]+\S)/.exec(text);
         const quote = /^ {0,3}>/.exec(text);
         const list = /^ {0,3}(?:[-+*]|[0-9]{1,9}[.)])(?=[ \t])/.exec(text);
         const rule = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.exec(text);
@@ -93,18 +137,43 @@ function collectSyntax(source, lines) {
         } else if (list) {
             const marker = list[0].trim();
             const offset = text.indexOf(marker);
-            addMark(marks, start + offset, start + offset + marker.length, "list-marker", "list");
-            blockKind = "list";
+            const ordered = /^\d/.test(marker);
+            blockKind = ordered ? "orderedList" : "unorderedList";
+            addMark(marks, start + offset, start + offset + marker.length, "list-marker", blockKind, {
+                listTag: ordered ? "ol" : "ul",
+                listIndent: offset,
+                listStart: ordered ? Number.parseInt(marker, 10) : undefined
+            });
+        } else if (setext && previousContent) {
+            const offset = text.indexOf(setext[2]);
+            addMark(marks, start + offset, start + offset + setext[2].length, "setext-heading", "setext", {
+                tag: setext[2][0] === "=" ? "h1" : "h2"
+            });
+            blockKind = "setext";
         } else if (rule) {
             for (let i = 0; i < text.length; i++)
                 if (/[*_-]/.test(text[i])) addMark(marks, start + i, start + i + 1, "thematic-break", "rule");
             blockKind = "rule";
-        } else if (setext && previousContent) {
-            const offset = text.indexOf(setext[2]);
-            addMark(marks, start + offset, start + offset + setext[2].length, "setext-heading", "setext");
-            blockKind = "setext";
         }
         lineKinds.push(blockKind);
+
+        // A trailing backslash or two spaces makes the following source line
+        // break visible. Keep both marker and break positions source-backed.
+        if (line.breakEnd > line.end && blockKind !== "setext") {
+            const hardBreak = /( {2,}|\\)$/.exec(text);
+            if (hardBreak) {
+                const markerStart = hardBreak.index;
+                const markerEnd = markerStart + hardBreak[0].length;
+                if (hardBreak[0] === "\\" && isEscaped(text, markerStart)) {
+                    // An even run of backslashes is literal, not a break marker.
+                } else {
+                    addMark(marks, start + markerStart, start + markerEnd,
+                        "hardBreakMarker", blockKind);
+                    addMark(marks, line.end, line.breakEnd,
+                        "hardBreak", blockKind, { kind: "lineBreak" });
+                }
+            }
+        }
 
         // Inline code spans are paired first so their contents stay literal.
         const ticks = String.fromCharCode(96);
@@ -124,17 +193,77 @@ function collectSyntax(source, lines) {
             cursor = close + run.length;
         }
 
-        const link = /!?\[([^\]]+)\]\(([^)]+)\)/g;
+        const matchedRanges = [];
+        const nestedImageLink = /\[(!\[([^\]]*)\]\(([^)]+)\))\]\(([^)]+)\)/g;
         let match;
-        while ((match = link.exec(text))) {
+        while ((match = nestedImageLink.exec(text))) {
             if (isEscaped(text, match.index)) continue;
-            const image = match[0][0] === "!";
-            const opening = match.index + (image ? 1 : 0);
+            const begin = match.index;
+            const innerStart = begin + 1;
+            const innerOpenEnd = innerStart + 2;
+            const innerLabelEnd = innerOpenEnd + match[2].length;
+            const innerDestinationOpen = innerLabelEnd + 1;
+            const innerDestinationStart = innerDestinationOpen + 2;
+            const innerDestinationEnd = innerDestinationStart + match[3].length;
+            const outerDestinationOpen = begin + match[1].length + 1;
+            const outerDestinationStart = outerDestinationOpen + 2;
+            const outerDestinationEnd = outerDestinationStart + match[4].length;
+            const imageGroup = `${start + innerStart}:image`;
+            const linkGroup = `${start + begin}:link`;
+            addMark(marks, start + begin, start + begin + 1, "link-open", "inline", {
+                groupId: linkGroup, destination: match[4]
+            });
+            addMark(marks, start + innerStart, start + innerOpenEnd, "image-open", "inline", {
+                groupId: imageGroup, destination: match[3], alt: match[2]
+            });
+            addMark(marks, start + innerDestinationOpen, start + innerDestinationStart,
+                "link-destination-open", "inline", { groupId: imageGroup });
+            addMark(marks, start + innerDestinationStart, start + innerDestinationEnd,
+                "link-destination", "inline", { groupId: imageGroup });
+            addMark(marks, start + innerDestinationEnd, start + innerDestinationEnd + 1,
+                "image-close", "inline", { groupId: imageGroup });
+            addMark(marks, start + outerDestinationOpen, start + outerDestinationStart,
+                "link-destination-open", "inline", { groupId: linkGroup });
+            addMark(marks, start + outerDestinationStart, start + outerDestinationEnd,
+                "link-destination", "inline", { groupId: linkGroup });
+            addMark(marks, start + outerDestinationEnd, start + outerDestinationEnd + 1,
+                "link-close", "inline", { groupId: linkGroup });
+            matchedRanges.push([begin, outerDestinationEnd + 1]);
+        }
+
+        const image = /!\[([^\]]*)\]\(([^)]+)\)/g;
+        while ((match = image.exec(text))) {
+            if (isEscaped(text, match.index) || matchedRanges.some(([from, to]) => from <= match.index && match.index < to)) continue;
+            const opening = match.index;
+            const middle = opening + 2 + match[1].length;
+            const destinationStart = middle + 2;
+            const destination = match[2].trim();
+            const groupId = `${start + opening}:image`;
+            const metadata = { groupId, destination, alt: match[1] };
+            addMark(marks, start + opening, start + opening + 2, "image-open", "inline", metadata);
+            addMark(marks, start + middle, start + middle + 2, "link-destination-open", "inline", metadata);
+            addMark(marks, start + destinationStart, start + destinationStart + destination.length,
+                "link-destination", "inline", metadata);
+            addMark(marks, start + destinationStart + destination.length,
+                start + destinationStart + destination.length + 1, "image-close", "inline", metadata);
+            matchedRanges.push([opening, destinationStart + destination.length + 1]);
+        }
+
+        const link = /\[([^\]]+)\]\(([^)]+)\)/g;
+        while ((match = link.exec(text))) {
+            if (isEscaped(text, match.index) || matchedRanges.some(([from, to]) => from <= match.index && match.index < to)) continue;
+            const opening = match.index;
             const middle = opening + match[1].length + 1;
-            const closing = match.index + match[0].length - 1;
-            addMark(marks, start + opening, start + opening + 1, image ? "image-open" : "link-open");
-            addMark(marks, start + middle, start + middle + 2, "link-destination-open");
-            addMark(marks, start + closing, start + closing + 1, "link-close");
+            const destinationStart = middle + 2;
+            const destination = match[2].trim();
+            const groupId = `${start + opening}:link`;
+            const metadata = { groupId, destination };
+            addMark(marks, start + opening, start + opening + 1, "link-open", "inline", metadata);
+            addMark(marks, start + middle, start + middle + 2, "link-destination-open", "inline", metadata);
+            addMark(marks, start + destinationStart, start + destinationStart + destination.length,
+                "link-destination", "inline", metadata);
+            addMark(marks, start + destinationStart + destination.length,
+                start + destinationStart + destination.length + 1, "link-close", "inline", metadata);
         }
 
         for (const token of ["**", "__", "~~", "*", "_"]) {
@@ -163,6 +292,8 @@ function collectSyntax(source, lines) {
         previousContent = !!text.trim();
     }
 
+    if (fence) fence.bodyEnd = source.length;
+
     marks.sort((a, b) => a.start - b.start || b.end - a.end);
     const unique = [];
     for (const mark of marks) {
@@ -171,29 +302,46 @@ function collectSyntax(source, lines) {
         unique.push(mark);
     }
     codeRanges.sort((a, b) => a.start - b.start);
-    return { marks: unique, codeRanges, lineKinds };
+    return { marks: unique, codeRanges, codeFences, lineKinds, tableAlignments };
 }
 
 /** Parse Markdown source into flat, source-preserving editor-detail records. */
-export function parseMarkdown(source, editor = null) {
+export async function parseMarkdown(source, editor = null) {
     if (typeof source !== "string") throw new TypeError("Markdown source must be a string.");
     const collection = createEditorDetailsCollection({ editor, dom: false });
     const lines = getLines(source);
-    const { marks, codeRanges, lineKinds } = collectSyntax(source, lines);
+    const { marks, codeRanges, codeFences, lineKinds, tableAlignments } = collectSyntax(source, lines);
+    const codeTokens = [];
+    for (const fence of codeFences) {
+        const body = source.slice(fence.bodyStart, fence.bodyEnd);
+        const language = resolveCodeLanguage(body, fence.codeLanguage);
+        fence.openMark.resolvedCodeLanguage = language;
+        const details = await parseCodeSource(body, fence.codeLanguage || undefined, editor);
+        let tokenPosition = fence.bodyStart;
+        for (const detail of details) {
+            codeTokens.push({ start: tokenPosition, end: tokenPosition + detail.length,
+                token: detail.token, language });
+            tokenPosition += detail.length;
+        }
+    }
     let position = 0;
     let lineIndex = 0;
     let markIndex = 0;
     let codeIndex = 0;
+    let codeTokenIndex = 0;
     const blockDetails = new Map();
 
     while (position < source.length) {
         while (lineIndex + 1 < lines.length && position >= lines[lineIndex].breakEnd) lineIndex++;
         while (markIndex < marks.length && marks[markIndex].end <= position) markIndex++;
         while (codeIndex < codeRanges.length && codeRanges[codeIndex].end <= position) codeIndex++;
+        while (codeTokenIndex < codeTokens.length && codeTokens[codeTokenIndex].end <= position) codeTokenIndex++;
         const line = lines[lineIndex];
         const mark = marks[markIndex]?.start === position ? marks[markIndex] : null;
         const code = codeRanges[codeIndex]?.start <= position && position < codeRanges[codeIndex]?.end
             ? codeRanges[codeIndex] : null;
+        const codeToken = codeTokens[codeTokenIndex]?.start <= position &&
+            position < codeTokens[codeTokenIndex]?.end ? codeTokens[codeTokenIndex] : null;
         let kind, end, syntax, blockKind, tag;
 
         if (mark) {
@@ -220,9 +368,10 @@ export function parseMarkdown(source, editor = null) {
             end = position + 1;
             const nextMark = marks[markIndex]?.start ?? source.length;
             const nextCode = code ? code.end : (codeRanges[codeIndex]?.start ?? source.length);
+            const nextCodeToken = codeToken ? codeToken.end : (codeTokens[codeTokenIndex]?.start ?? source.length);
             while (end < source.length && source[end] !== "\r" && source[end] !== "\n" &&
                 source[end] !== "\t" && !isWhitespace(source[end]) &&
-                end < nextMark && end < nextCode) end++;
+                end < nextMark && end < nextCode && end < nextCodeToken) end++;
         }
 
         const detail = collection.add({
@@ -235,7 +384,13 @@ export function parseMarkdown(source, editor = null) {
             tag,
             parentDetails: blockDetails.get(lineIndex) || null,
             ...(syntax ? { syntax } : {}),
-            blockKind: blockKind || lineKinds[lineIndex] || "paragraph"
+            ...(mark ? Object.fromEntries(Object.entries(mark).filter(([key]) =>
+                !["start", "end", "syntax", "blockKind", "kind", "tag"].includes(key))) : {}),
+            ...(tableAlignments.has(lineIndex) ? { tableAlignments: tableAlignments.get(lineIndex) } : {}),
+            blockKind: blockKind || lineKinds[lineIndex] || "paragraph",
+            ...(code ? { codeLanguage: code.codeLanguage } : {}),
+            ...(codeToken?.token ? { token: codeToken.token } : {}),
+            ...(codeToken ? { resolvedCodeLanguage: codeToken.language } : {})
         });
         if (mark?.kind === "element") blockDetails.set(lineIndex, detail);
         position = end;

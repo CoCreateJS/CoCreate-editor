@@ -42,6 +42,7 @@ async function fixture(source, run) {
             editor.setAttribute('editor', 'dom');
             editor.setAttribute('crdt', 'false');
             editor.contentEditable = 'true';
+            editor.style.minHeight = '2em';
             editor.value = source;
             editor.editor = { detachedDOM: document.createElement('div') };
             document.body.append(editor);
@@ -64,7 +65,8 @@ async function fixture(source, run) {
                     [...(node.localName === 'template' ? node.content : node).childNodes].map(structure)];
                 const contents = root => JSON.stringify([...root.childNodes].map(structure));
                 const actual = contents(editor);
-                if (contents(fresh) !== actual) throw new Error('Incremental DOM differs from a fresh details render');
+                if (contents(fresh) !== actual) throw new Error('Incremental DOM differs from a fresh details render: ' +
+                    JSON.stringify({ source: sourceOf(), actual: editor.innerHTML, expected: fresh.innerHTML }));
                 if (contents(editor.editor.detachedDOM) !== actual) throw new Error('Live and detached DOM differ');
             };
             Object.assign(window, { dom, planDOMEdit, applyEditorDetailsPlan, renderDOM });
@@ -386,5 +388,189 @@ test('replacing a template wrapper reuses its descendant nodes when they move in
                 live.ownerDocument === document, live.parentNode.tagName,
                 result.rendered.liveDOM.added.length, editor.innerHTML];
         }), [true, true, true, true, true, 'MAIN', 0, '<main><p>keep</p><i>tail</i></main>']);
+    });
+});
+
+test('typing the missing angle and closing tag converts broken source text into a live div', async () => {
+    const source = '<h3>Heading</h3>\n<div class="broken"  data-note="missing closing angle"\n<p>After</p>';
+    await fixture(source, async page => {
+        await page.evaluate(() => {
+            delete editor.editor.updateText; // The local demo uses the existing input/update fallback.
+            const broken = details.find(detail => detail.kind === 'text' && detail.value.includes('<div'));
+            editor.focus();
+            const caret = document.createRange();
+            caret.setStart(broken.liveDOM, broken.liveDOM.data.lastIndexOf('\n'));
+            caret.collapse(true);
+            document.getSelection().removeAllRanges();
+            document.getSelection().addRange(caret);
+        });
+        await page.keyboard.type('></div>');
+        assert.deepEqual(await page.evaluate(() => {
+            checkFresh();
+            return [sourceOf(), !!editor.querySelector('div.broken'),
+                editor.querySelector('div.broken')?.childNodes.length,
+                editor.querySelector('p')?.parentNode === editor];
+        }), [source.replace('angle"\n', 'angle"></div>\n'), true, 0, true]);
+    });
+});
+
+test('typing HTML from an empty DOM editor keeps raw source and renders completed elements', async () => {
+    await fixture('', async page => {
+        await page.evaluate(() => {
+            delete editor.editor.updateText;
+            editor.focus();
+            const caret = document.createRange();
+            caret.setStart(editor, 0);
+            caret.collapse(true);
+            document.getSelection().removeAllRanges();
+            document.getSelection().addRange(caret);
+        });
+        await page.keyboard.type('<b>Hello</b>!');
+        assert.deepEqual(await page.evaluate(() => {
+            checkFresh();
+            return [sourceOf(), editor.innerHTML];
+        }), ['<b>Hello</b>!', '<b>Hello</b>!']);
+    });
+});
+
+test('real typing preserves single quotes, spacing, and encoded entities in the source', async () => {
+    const source = '<p title=\'A &amp; B\'  class="keep">a &amp; b</p>';
+    await fixture(source, async page => {
+        await page.evaluate(() => {
+            delete editor.editor.updateText;
+            editor.focus();
+            const text = details.find(detail => detail.value === 'a &amp; b');
+            const caret = document.createRange();
+            caret.setStart(text.liveDOM, 3);
+            caret.collapse(true);
+            document.getSelection().removeAllRanges();
+            document.getSelection().addRange(caret);
+        });
+        await page.keyboard.type('X');
+        assert.deepEqual(await page.evaluate(() => {
+            checkFresh();
+            return [sourceOf(), editor.firstChild.textContent, dom.getSource(editor)];
+        }), [source.replace('a &amp; b', 'a &amp;X b'), 'a &X b', source.replace('a &amp; b', 'a &amp;X b')]);
+        await page.keyboard.press('Backspace');
+        await page.keyboard.press('Backspace');
+        assert.deepEqual(await page.evaluate(() => {
+            checkFresh();
+            return [sourceOf(), editor.firstChild.textContent];
+        }), [source.replace('a &amp; b', 'a  b'), 'a  b']);
+    });
+});
+
+test('real typing submits the actual source position inside repeated text', async () => {
+    await fixture('<p>aaaa</p>', async page => {
+        await page.evaluate(() => {
+            delete editor.editor.updateText;
+            window.operations = [];
+            core.events.on('text-update', operation => operations.push(operation));
+            editor.focus();
+            const text = details.find(detail => detail.value === 'aaaa');
+            const caret = document.createRange();
+            caret.setStart(text.liveDOM, 1);
+            caret.collapse(true);
+            document.getSelection().removeAllRanges();
+            document.getSelection().addRange(caret);
+        });
+        await page.keyboard.type('a');
+        assert.deepEqual(await page.evaluate(() => [sourceOf(), operations[0].start, operations[0].length, operations[0].value]),
+            ['<p>aaaaa</p>', 4, 0, 'a']);
+    });
+});
+
+test('typing a completed div also preserves the source caret through the existing update callback', async () => {
+    const source = '<div class="broken"  data-note="missing closing angle"';
+    await fixture(source, async page => {
+        await page.evaluate(() => {
+            editor.focus();
+            const broken = details[0];
+            const caret = document.createRange();
+            caret.setStart(broken.liveDOM, broken.liveDOM.length);
+            caret.collapse(true);
+            document.getSelection().removeAllRanges();
+            document.getSelection().addRange(caret);
+        });
+        await page.keyboard.type('></div>!');
+        assert.deepEqual(await page.evaluate(() => {
+            checkFresh();
+            return [sourceOf(), editor.querySelector('.broken')?.childNodes.length, editor.lastChild.data];
+        }), [source + '></div>!', 0, '!']);
+    });
+});
+
+test('replacing a native selection with typed HTML preserves source offsets and keeps subsequent typing after the inserted tag', async () => {
+    const source = '<main><b>left</b> between <i>right</i></main>';
+    await fixture(source, async page => {
+        await page.evaluate(() => {
+            delete editor.editor.updateText;
+            editor.focus();
+            const left = details.find(detail => detail.value === 'left');
+            const right = details.find(detail => detail.value === 'right');
+            const selection = document.createRange();
+            selection.setStart(left.liveDOM, 1);
+            selection.setEnd(right.liveDOM, 2);
+            document.getSelection().removeAllRanges();
+            document.getSelection().addRange(selection);
+        });
+        await page.keyboard.insertText('<u>X</u>');
+        await page.keyboard.type('!');
+        assert.deepEqual(await page.evaluate(() => {
+            checkFresh();
+            return [sourceOf(), editor.querySelector('u')?.textContent];
+        }), [source.slice(0, source.indexOf('eft')) + '<u>X</u>!' + source.slice(source.indexOf('right') + 2), 'X']);
+    });
+});
+
+test('pasting a completed broken line preserves the completion through following edits', async () => {
+    const original = '<h3>Heading</h3>\n<div class="broken"  data-note="missing closing angle"\n<p>After</p>';
+    const completed = '<div class="broken"  data-note="missing closing angle"></div>';
+    await fixture(original, async page => {
+        await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+        await page.evaluate(async completed => {
+            delete editor.editor.updateText;
+            editor.focus();
+            const broken = details.find(detail => detail.kind === 'text' && detail.value.includes('<div'));
+            const range = document.createRange();
+            range.setStart(broken.liveDOM, 1);
+            range.setEnd(broken.liveDOM, broken.liveDOM.length - 1);
+            document.getSelection().removeAllRanges();
+            document.getSelection().addRange(range);
+            await navigator.clipboard.writeText(completed);
+        }, completed);
+        await page.keyboard.press('Control+v');
+        await page.keyboard.type('!');
+        assert.deepEqual(await page.evaluate(() => {
+            checkFresh();
+            return [sourceOf(), !!editor.querySelector('.broken'), editor.querySelector('p')?.parentNode === editor];
+        }), [original.replace('<div class="broken"  data-note="missing closing angle"', completed + '!'), true, true]);
+    });
+});
+
+test('a data-less input replacing a text node cannot make completed HTML revert to the old source', async () => {
+    const original = '<h3>Heading</h3>\n<div class="broken"  data-note="missing closing angle"\n<p>After</p>';
+    const completed = '<div class="broken"  data-note="missing closing angle"></div>';
+    await fixture(original, async page => {
+        await page.evaluate(completed => {
+            delete editor.editor.updateText;
+            editor.focus();
+            const broken = details.find(detail => detail.kind === 'text' && detail.value.includes('<div'));
+            const range = document.createRange();
+            range.selectNodeContents(broken.liveDOM);
+            document.getSelection().removeAllRanges();
+            document.getSelection().addRange(range);
+            editor.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, inputType: 'insertReplacementText' }));
+            const replacement = document.createTextNode('\n' + completed + '\n');
+            broken.liveDOM.replaceWith(replacement);
+            const after = document.createRange(); after.setStart(replacement, completed.length + 1); after.collapse(true);
+            document.getSelection().removeAllRanges(); document.getSelection().addRange(after);
+            editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertReplacementText' }));
+        }, completed);
+        await page.keyboard.type('!');
+        assert.deepEqual(await page.evaluate(() => {
+            checkFresh();
+            return [sourceOf(), !!editor.querySelector('.broken')];
+        }), [original.replace('<div class="broken"  data-note="missing closing angle"', completed + '!'), true]);
     });
 });

@@ -68,9 +68,14 @@ export async function parseMarkdown(source, editor = null) {
     return parser.default(source, editor);
 }
 
-export async function parseCode(source, language = "text", editor = null) {
+export async function parseCode(source, language, editor = null) {
     const parser = await loadParser("code");
     return parser.parseCode(source, language, editor);
+}
+
+export async function autoLanguageDetection(source) {
+    const parser = await loadParser("code");
+    return parser.autoLanguageDetection(source);
 }
 
 export async function createTextEditor(source, editor = null) {
@@ -88,7 +93,7 @@ export async function createMarkdownEditor(source, editor = null) {
     return module.createMarkdownEditor(source, editor);
 }
 
-export async function createCodeEditor(source, language = "text", editor = null) {
+export async function createCodeEditor(source, language, editor = null) {
     const module = await loadEditor("code");
     return module.createCodeEditor(source, language, editor);
 }
@@ -97,15 +102,11 @@ export async function parseAndStoreEditorDetails(editor, source) {
     return store(editor, await createDOMEditor(source, editor));
 }
 
-export async function parseAndStoreTextDetails(editor, source) {
-    return store(editor, await createTextEditor(source, editor));
-}
-
 export async function parseAndStoreMarkdownDetails(editor, source) {
     return store(editor, await createMarkdownEditor(source, editor));
 }
 
-export async function parseAndStoreCodeDetails(editor, source, language = "text") {
+export async function parseAndStoreCodeDetails(editor, source, language) {
     return store(editor, await createCodeEditor(source, language, editor));
 }
 
@@ -124,7 +125,13 @@ export function updateStoredEditorDetails(editor, update) {
     const details = getStoredEditorDetails(editor);
     if (!details) throw new Error("No prototype editor details are stored for this editor.");
     const updateDetails = updatesByEditor.get(editor) || updateEditorDetails;
-    return updateDetails(details, update, { editor });
+    const result = updateDetails(details, update, { editor });
+    if (result && typeof result.then === "function") return result.then(updated => {
+        if (updated.editorDetails) detailsByEditor.set(editor, updated.editorDetails);
+        return updated;
+    });
+    if (result.editorDetails) detailsByEditor.set(editor, result.editorDetails);
+    return result;
 }
 
 export { lengthEditorDetails, updateEditorDetails, bindEditorDetailsLiveDOM };

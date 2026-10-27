@@ -33,9 +33,9 @@ function indexDetails(details) {
 
 function sharedContainer(first, last) {
     const parents = new Set();
-    for (let detail = last?.parentDetails || (last?.kind === "element" ? last : null); detail; detail = detail.parentDetails)
+    for (let detail = last?.kind === "element" ? last : last?.parentDetails; detail; detail = detail.parentDetails)
         parents.add(detail);
-    for (let detail = first?.parentDetails || (first?.kind === "element" ? first : null); detail; detail = detail.parentDetails)
+    for (let detail = first?.kind === "element" ? first : first?.parentDetails; detail; detail = detail.parentDetails)
         if (parents.has(detail)) return detail;
     return null;
 }
@@ -124,8 +124,9 @@ export function planDOMEdit(details, start, end, value, { parse = parseDOM, edit
         const closesAncestor = parsed.some(detail => detail.kind === "elementEnd" &&
             detail.tag !== detail.parentDetails?.tag && ancestors.has(detail.tag));
         const joinsText = (parsed[0]?.kind === "text" && details[fromIndex - 1]?.kind === "text") ||
-            (parsed.at(-1)?.kind === "text" && details[toIndex]?.kind === "text");
-        if (keepsContainer(parsed, container) && !needsMoreContext(parsed) && !closesAncestor && !joinsText) break;
+            (parsed.at(-1)?.kind === "text" && details[toIndex]?.kind === "text") ||
+            (!parsed.length && details[fromIndex - 1]?.kind === "text" && details[toIndex]?.kind === "text");
+        if (!needsMoreContext(parsed) && !closesAncestor && !joinsText) break;
         container = container.parentDetails;
     }
     if (!container) {
@@ -146,6 +147,7 @@ export function planDOMEdit(details, start, end, value, { parse = parseDOM, edit
         parsed = parse(parseSource, editor);
     }
     if (detailsToSource(parsed) !== parseSource) throw new Error("DOM parser did not preserve the edited source.");
+    const anchor = container && keepsContainer(parsed, container) ? container : externalParent || editor;
 
     const staged = new Map(raw.edited.map(item => [item.detail, item.value]));
     const candidates = new Map(), old = new Set(details);
@@ -229,7 +231,7 @@ export function planDOMEdit(details, start, end, value, { parse = parseDOM, edit
         retained: nextDetails.filter(detail => old.has(detail) && !changed.has(detail)),
         removed,
         reparse: { start: parseStart, end: parseEnd, source: parseSource,
-            anchor: container || editor,
+            anchor,
             parentDetails: externalParent,
             containers: container ? [container] : units.slice(left, right + 1).map(unit => unit.root) } };
 }

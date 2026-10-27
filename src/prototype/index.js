@@ -1,3 +1,5 @@
+if (typeof document !== "undefined") import("./index.css");
+
 export * from "./core.js";
 export { createEditorEvents } from "./events.js";
 export { bindEditorInput } from "./events.js";

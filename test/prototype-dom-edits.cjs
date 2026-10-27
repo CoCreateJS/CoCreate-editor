@@ -260,3 +260,25 @@ test('selection deletion that joins text runs retains one of the surviving text 
     assert.ok(result.edited.some(item => item.detail === survivor));
     assert.equal(result.added.filter(detail => detail.kind === 'text').length, 0);
 });
+
+test('an affected element can be replaced by a text/element sequence without parsing its parent', () => {
+    const source = '<main><b>old</b><i>keep</i></main>';
+    const details = parseDOM(source), parent = details[0];
+    const affected = details.find(detail => detail.tag === 'b');
+    const sibling = details.find(detail => detail.value === 'keep');
+    const start = source.indexOf('<b>'), end = source.indexOf('</b>') + 4;
+    const value = 'prefix<u>new</u>suffix', parsed = [];
+    const result = apply(details, start, end - start, value, { parse(fragment, editor) {
+        parsed.push(fragment);
+        return parseDOM(fragment, editor);
+    } });
+    assert.deepEqual(parsed, [value]);
+    assert.equal(result.reparse.start, start);
+    assert.equal(result.reparse.end, end);
+    assert.equal(result.reparse.anchor, parent);
+    assert.ok(result.removed.some(item => item.detail === affected));
+    assert.ok(details.includes(parent));
+    assert.ok(details.includes(sibling));
+    assert.ok(details.filter(detail => ['prefix', 'suffix'].includes(detail.value))
+        .every(detail => detail.parentDetails === parent));
+});

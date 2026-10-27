@@ -11,6 +11,8 @@ export const elementEditorDetailsPrototype = Object.create(editorDetailsPrototyp
 const collectionsByDetail = new WeakMap();
 const detailsByLiveDOM = new WeakMap();
 
+export const getEditorDetailsForNode = node => detailsByLiveDOM.get(node);
+
 const validAttributeName = /^[A-Za-z_:][\w:.-]*$/;
 
 function submitUpdate(detail, update) {

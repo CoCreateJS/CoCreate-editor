@@ -156,6 +156,15 @@ test("Markdown details preserve delimiters, content, and individual whitespace n
     assert.equal(details[0].getAttribute, undefined);
 });
 
+test("Markdown fence details retain the declared code language", async () => {
+    const details = await prototype.parseMarkdown("```js title=example.js\nconst answer = 42;\n```\n");
+    const open = details.find(detail => detail.syntax === "fence-open");
+    const code = details.find(detail => detail.kind === "codeText");
+    assert.equal(open.codeLanguage, "js");
+    assert.equal(open.codeInfo, "js title=example.js");
+    assert.equal(code.codeLanguage, "js");
+});
+
 test("code bridge selects language tokenizers and preserves every source character", async () => {
     const editor = { editor: { updateText() {} } };
     const javascript = 'const answer = "yes";\n';
@@ -193,7 +202,34 @@ test("code bridge accepts every existing language module through the shared deta
     }
 });
 
-test("prototype core routes local input through updateText and incoming updates into details", async () => {
+test("code language detection recognizes common syntax and falls back from unknown labels", async () => {
+    const examples = [
+        ['{"name":"CoCreate","active":true}', "json"],
+        ['<section><h1>Hello</h1></section>', "html"],
+        ['.card { color: red; display: block; }', "css"],
+        ['const answer = 42;\nconsole.log(answer);', "javascript"]
+    ];
+    for (const [source, expected] of examples)
+        assert.equal(await prototype.autoLanguageDetection(source), expected);
+
+    for (const [source, language] of [
+        [examples[0][0], undefined],
+        [examples[3][0], "javascrpt"]
+    ]) {
+        const details = await prototype.parseCode(source, language);
+        assert.ok(details.length > 0);
+        assert.ok(details.every(detail => detail.language === (language ? "javascript" : "json")));
+    }
+
+    const plain = await prototype.parseCode("some ambiguous text");
+    assert.ok(plain.every(detail => detail.language === "text" && !detail.token));
+    const explicitText = await prototype.parseCode(examples[3][0], "text");
+    assert.ok(explicitText.every(detail => detail.language === "text" && !detail.token));
+    const editor = await prototype.createCodeEditor(examples[2][0]);
+    assert.equal(editor.language, "css");
+});
+
+test("prototype core routes plain text updates without creating editor details", async () => {
     const operations = [];
     class TextSurface extends EventTarget {
         constructor() {
@@ -209,6 +245,7 @@ test("prototype core routes local input through updateText and incoming updates 
     const element = new TextSurface();
     const core = prototype.createPrototypeCore({ updateText: operation => operations.push(operation), eventTarget: null });
     const details = await core.initEditor(element, { mode: "text" });
+    assert.equal(details, undefined);
 
     element.value = "aXbc";
     element.dispatchEvent(new Event("input"));
@@ -221,12 +258,13 @@ test("prototype core routes local input through updateText and incoming updates 
         elements: [element], start: 1, length: 1, value: "Y", string: "aYbc"
     });
     assert.equal(results.length, 1);
-    assert.equal(lengthEditorDetails.detailsToSource(details), "aYbc");
-    assert.equal(core.getEditorDetails(element), details);
+    assert.equal(results[0].source, "aYbc");
+    assert.equal(element.value, "aYbc");
+    assert.equal(core.getEditorDetails(element), undefined);
     core.disconnect();
 });
 
-test("prototype local text edits update details without applying the edit twice to the surface", async () => {
+test("prototype local text edits preserve the native surface without editor details", async () => {
     class TextSurface extends EventTarget {
         constructor() {
             super();
@@ -245,7 +283,8 @@ test("prototype local text edits update details without applying the edit twice 
     element.value = "aXbc";
     element.dispatchEvent(new Event("input"));
     await Promise.resolve();
-    assert.equal(lengthEditorDetails.detailsToSource(details), "aXbc");
+    assert.equal(details, undefined);
+    assert.equal(core.getEditorDetails(element), undefined);
     assert.equal(element.value, "aXbc");
     assert.equal(element.selectionStart, 2);
     core.disconnect();

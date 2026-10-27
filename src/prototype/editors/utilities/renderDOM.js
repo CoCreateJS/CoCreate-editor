@@ -9,17 +9,29 @@ function bind(detail, node, property) {
 }
 
 function textValue(detail, document) {
-    if (["script", "style"].includes(detail.parentDetails?.tag) || !detail.value.includes("&"))
+    if (["script", "style"].includes(detail.parentDetails?.tag) || !detail.value.includes("&")) {
+        detail.renderEntities = null;
         return detail.value;
-    if (detail.decodedSource === detail.value) return detail.decodedValue;
+    }
+    if (detail.decodedSource === detail.value) {
+        detail.renderEntities = detail.decodedEntities;
+        return detail.decodedValue;
+    }
     const decoder = document.createElement("textarea");
+    const entities = [];
+    let difference = 0;
     // Decode references individually so literal markup and line breaks are preserved.
-    const value = detail.value.replace(/&(?:#(?:x[\da-f]+|\d+)|[a-z][\da-z]*);?/ig, entity => {
+    const value = detail.value.replace(/&(?:#(?:x[\da-f]+|\d+)|[a-z][\da-z]*);?/ig, (entity, start) => {
         decoder.innerHTML = entity;
-        return decoder.textContent;
+        const decoded = decoder.textContent;
+        if (decoded !== entity) entities.push({ start, end: start + entity.length,
+            renderStart: start - difference, renderEnd: start - difference + decoded.length });
+        difference += entity.length - decoded.length;
+        return decoded;
     });
     detail.decodedSource = detail.value;
     detail.decodedValue = value;
+    detail.decodedEntities = detail.renderEntities = entities;
     return value;
 }
 
