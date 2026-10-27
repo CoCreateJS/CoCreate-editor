@@ -33,11 +33,11 @@ async function fixture(source, run) {
     try {
         await page.goto(origin);
         await page.evaluate(async source => {
-            const { createPrototypeCore } = await import('/prototype/core.js');
-            const dom = await import('/prototype/editors/dom.js');
-            const { planDOMEdit } = await import('/prototype/editors/utilities/planDOMEdit.js');
-            const { applyEditorDetailsPlan } = await import('/prototype/editors/utilities/updateEditorDetails.js');
-            const { renderDOM } = await import('/prototype/editors/utilities/renderDOM.js');
+            const { createEditorCore } = await import('/core.js');
+            const dom = await import('/editors/dom.js');
+            const { planDOMEdit } = await import('/editors/utilities/planDOMEdit.js');
+            const { applyEditorDetailsPlan } = await import('/editors/utilities/updateEditorDetails.js');
+            const { renderDOM } = await import('/editors/utilities/renderDOM.js');
             window.editor = document.createElement('div');
             editor.setAttribute('editor', 'dom');
             editor.setAttribute('crdt', 'false');
@@ -46,7 +46,7 @@ async function fixture(source, run) {
             editor.value = source;
             editor.editor = { detachedDOM: document.createElement('div') };
             document.body.append(editor);
-            window.core = createPrototypeCore({ eventTarget: window });
+            window.core = createEditorCore({ eventTarget: window });
             await core.initEditor(editor);
             window.details = core.getEditorDetails(editor);
             window.sourceOf = () => details.map(detail => detail.value).join('');

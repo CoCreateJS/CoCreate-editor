@@ -1,79 +1,75 @@
-import { boundaryFor, boundarySelector, getSelection, isNative, project } from "../selection.js";
-import { textChange } from "../textChange.js";
+import { setSelection } from "../selection.js";
+export { getSelection, setSelection } from "../selection.js";
 
-// Apply CRDT's canonical text silently, preserving the current selection.
-export function updateTextElement(element, string, change) {
-    const native = isNative(element);
-    const root = element.tagName === "IFRAME" ? element.contentDocument.body : element;
-    const view = native ? null : project(root);
-    const before = native ? element.value : view.text;
-    if (before === string) return;
+function isTextField(element) {
+    return element?.tagName === "INPUT" || element?.tagName === "TEXTAREA" ||
+        (!element?.ownerDocument && typeof element?.value === "string");
+}
 
-    let start = 0, end = before.length, after = string.length;
-    if (change && before.slice(0, change.start) + (change.value ?? "") +
-        before.slice(change.start + (change.length || 0)) === string) {
-        start = change.start;
-        end = start + (change.length || 0);
-        after = start + (change.value?.length || 0);
-    } else {
-        // Reconcile browser-applied edits against CRDT's canonical string if needed.
-        const diff = textChange(before, string);
-        start = diff.start;
-        end = start + diff.length;
-        after = start + diff.value.length;
-    }
-    const value = string.slice(start, after);
-    const position = offset => offset < start ? offset : offset >= end
-        ? offset + value.length - (end - start) : start + value.length;
+/** Plain text uses the native surface directly, without editor details. */
+export function createTextEditor(source, editor = null) {
+    if (typeof source !== "string") throw new TypeError("Text source must be a string.");
+    return { type: "text", source, element: editor };
+}
 
-    if (native) {
-        const selection = getSelection(element);
-        const direction = element.selectionDirection;
-        if (!selection) element.value = string;
-        else {
-            element.setRangeText(value, start, end, "preserve");
-            element.setSelectionRange(position(selection.start), position(selection.end), direction);
-        }
+export function renderEditor(element, source) {
+    if (!element) return;
+    if (isTextField(element)) {
+        if (element.value !== source) element.value = source;
         return;
     }
-
-    const doc = root.ownerDocument;
-    const active = doc.activeElement;
-    const selection = (active === root || root.contains(active)) ? getSelection(element) : null;
-    if (root.childNodes.length === 1 && root.firstChild.nodeType === 3) {
-        root.firstChild.replaceData(start, end - start, value);
-    } else {
-        // Browser-created line wrappers are presentation, not HTML source in text mode.
-        // Retain independent nested surfaces when their placeholder is outside the edit.
-        const children = [];
-        let offset = 0;
-        for (const node of root.querySelectorAll(boundarySelector)) {
-            if (boundaryFor(node.parentElement, root)) continue;
-            const previous = view.points.get(node)?.[0];
-            if (previous === undefined || (previous >= start && previous < end)) continue;
-            const next = position(previous);
-            if (string[next] !== "\uFFFC") continue;
-            if (next > offset) children.push(doc.createTextNode(string.slice(offset, next)));
-            children.push(node);
-            offset = next + 1;
-        }
-        if (offset < string.length || !children.length) children.push(doc.createTextNode(string.slice(offset)));
-        root.replaceChildren(...children);
+    if (!element.ownerDocument) return;
+    let text = element.firstChild;
+    const existingPlaceholder = element.childNodes.length === 2 &&
+        element.lastChild?.nodeName === "BR" ? element.lastChild : null;
+    if (text?.nodeType !== 3 || (element.childNodes.length !== 1 && !existingPlaceholder)) {
+        text = element.ownerDocument.createTextNode(source);
+        element.replaceChildren(text);
+    } else if (text.data !== source) {
+        // A native input has already changed this node. Reassigning even the
+        // same data resets the browser's caret, so only write incoming changes.
+        text.data = source;
     }
-    if (selection) {
-        const point = offset => {
-            let index = 0;
-            for (const node of root.childNodes) {
-                const length = node.nodeType === 3 ? node.length : 1;
-                if (node.nodeType === 3 && offset <= length) return [node, offset];
-                if (node.nodeType !== 3 && offset <= 1) return [root, index + offset];
-                offset -= length;
-                index++;
-            }
-            return [root, root.childNodes.length];
-        };
-        const [anchor, anchorOffset] = point(position(selection.anchor));
-        const [head, headOffset] = point(position(selection.head));
-        doc.getSelection().setBaseAndExtent(anchor, anchorOffset, head, headOffset);
-    }
+    // Chromium does not create the trailing empty line box for a final LF in
+    // contenteditable text. This placeholder gives the caret a real next line;
+    // textContent still contains only the source newline.
+    const placeholder = element.lastChild?.nodeName === "BR" ? element.lastChild : null;
+    if (source.endsWith("\n")) {
+        if (!placeholder) element.append(element.ownerDocument.createElement("br"));
+    } else placeholder?.remove();
 }
+
+/** Apply an incoming source update; native local edits need no second write. */
+export function updateEditor(element, update, previousSource) {
+    const { start, value } = update;
+    const end = Number.isInteger(update.end) ? update.end : start + update.length;
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start ||
+        end > previousSource.length || typeof value !== "string")
+        throw new RangeError("Text update must contain a valid source range and string value.");
+    const source = previousSource.slice(0, start) + value + previousSource.slice(end);
+    if (typeof update.string === "string" && update.string !== source)
+        throw new RangeError("CRDT update does not match the previous text value.");
+    renderEditor(element, source);
+    return { previousSource, source };
+}
+
+export function getSource(element) {
+    return isTextField(element) ? element.value : element.textContent || "";
+}
+
+/** Keep native paragraph markup out of the plain-text source and offsets. */
+export function beforeInput(element, event, selection) {
+    if (isTextField(element) || !event.cancelable || event.defaultPrevented || event.isComposing ||
+        event.target !== element || !selection ||
+        !["insertParagraph", "insertLineBreak"].includes(event.inputType)) return;
+    event.preventDefault();
+    const source = getSource(element);
+    renderEditor(element, source.slice(0, selection.start) + "\n" + source.slice(selection.end));
+    setSelection(element, { start: selection.start + 1 });
+    const InputEvent = element.ownerDocument.defaultView.InputEvent;
+    element.dispatchEvent(new InputEvent("input", {
+        bubbles: true, inputType: event.inputType, data: "\n"
+    }));
+}
+
+export default createTextEditor;

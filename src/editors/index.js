@@ -25,7 +25,7 @@ function assertEditorKey(editor) {
 
 function load(type, loaders, cache) {
     const loader = loaders[type];
-    if (!loader) throw new TypeError(`Unknown prototype editor or parser: ${type}`);
+    if (!loader) throw new TypeError(`Unknown editor or parser: ${type}`);
     if (!cache.has(type)) {
         const pending = loader().catch(error => {
             cache.delete(type);
@@ -123,7 +123,7 @@ export function deleteStoredEditorDetails(editor) {
 
 export function updateStoredEditorDetails(editor, update) {
     const details = getStoredEditorDetails(editor);
-    if (!details) throw new Error("No prototype editor details are stored for this editor.");
+    if (!details) throw new Error("No editor details are stored for this editor.");
     const updateDetails = updatesByEditor.get(editor) || updateEditorDetails;
     const result = updateDetails(details, update, { editor });
     if (result && typeof result.then === "function") return result.then(updated => {

@@ -1,4 +1,4 @@
-// Run: CHROMIUM_PATH=/path/to/chrome node benchmarks/dom-full-parse.cjs
+// Run: CHROMIUM_PATH=/path/to/chrome node benchmarks/editor-dom-parse.cjs
 // Fresh full-source details on every edit; no DOM rendering or reconciliation.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -31,7 +31,7 @@ async function main() {
             const page = await browser.newPage();
             await page.goto(`http://127.0.0.1:${server.address().port}`);
             const result = await page.evaluate(async ({ target, inputSource }) => {
-                const { parseDOM } = await import('/prototype/editors/parsers/dom.js');
+                const { parseDOM } = await import('/editors/parsers/dom.js');
                 const block = i => `<section class="card  padded"  data-id="${i}">\n` +
                     `  <h3 title="Card ${i}">Heading ${i}</h3>\n` +
                     '  <p>Some ordinary text with  spaces, &amp; entities, and <strong>nested content</strong>.</p>\n' +
@@ -113,7 +113,7 @@ async function main() {
             sourceFile: inputFile,
             browser: await browser.version(), node: process.version, cpu: os.cpus()[0].model,
             logicalCPUs: os.cpus().length, platform: `${os.platform()} ${os.arch()}`,
-            scope: 'Current prototype parseDOM + fresh detail construction only; no DOM, diff, CRDT, or selection. Source preparation and validation excluded; variants checked before timing, final result checked afterward. Normal browser GC; previous result retained until replacement returns. ASCII fixture. Six warm-up parses per size.',
+            scope: 'Current editor parseDOM + fresh detail construction only; no DOM, diff, CRDT, or selection. Source preparation and validation excluded; variants checked before timing, final result checked afterward. Normal browser GC; previous result retained until replacement returns. ASCII fixture. Six warm-up parses per size.',
             results }, null, 2) + '\n');
     } finally {
         await browser?.close();

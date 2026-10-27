@@ -31,9 +31,9 @@ async function fixture(run, source = '') {
     try {
         await page.goto(origin);
         await page.evaluate(async source => {
-            const { createPrototypeCore } = await import('/prototype/core.js');
-            const markdown = await import('/prototype/editors/markdown.js');
-            window.core = createPrototypeCore({ eventTarget: window });
+            const { createEditorCore } = await import('/core.js');
+            const markdown = await import('/editors/markdown.js');
+            window.core = createEditorCore({ eventTarget: window });
             window.editor = document.createElement('div');
             editor.setAttribute('editor', 'markdown');
             editor.contentEditable = 'true';

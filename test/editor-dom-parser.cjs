@@ -2,8 +2,8 @@ const { test, before } = require('node:test');
 const assert = require('node:assert/strict');
 let parseDOM, renderEditor;
 before(async () => {
-    ({ parseDOM } = await import('../src/prototype/editors/parsers/dom.js'));
-    ({ renderEditor } = await import('../src/prototype/editors/utilities/renderEditor.js'));
+    ({ parseDOM } = await import('../src/editors/parsers/dom.js'));
+    ({ renderEditor } = await import('../src/editors/utilities/renderEditor.js'));
 });
 
 function assertSource(details, source) {

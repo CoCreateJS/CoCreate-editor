@@ -33,9 +33,9 @@ async function fixture(run, source = '<p>abc</p>') {
     try {
         await page.goto(origin);
         await page.evaluate(async source => {
-            const { createPrototypeCore } = await import('/prototype/core.js');
-            const code = await import('/prototype/editors/code.js');
-            window.core = createPrototypeCore({ eventTarget: window });
+            const { createEditorCore } = await import('/core.js');
+            const code = await import('/editors/code.js');
+            window.core = createEditorCore({ eventTarget: window });
             window.editor = document.createElement('div');
             editor.setAttribute('editor', 'code');
             editor.setAttribute('editor-language', 'html');

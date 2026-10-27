@@ -1,588 +1,594 @@
-import {
-    syntaxRules,
-    hasMarkdownContent,
-    codeRule,
-    blockMatch,
-    makeElement,
-    applyAttributes
-} from "./utilities/config.js";
-import { getEditorDetails, setEditorDetails, findEditorDetailsContaining } from "./utilities/details.js";
-import { reconcileMirror } from "./utilities/mirror.js";
-import { markPlaceholder, setSourceMap } from "./utilities/nodeData.js";
-import { applyIndexedDOM, getParsedDetails, setParsedDetails, setUpdateRegion,
-    observeIndexedDOM, hasIndexedMutations } from "./utilities/indexedDOM.js";
-// Text-to-DOM renderer adapted from demo/v2.html. Maps use UTF-16 source offsets.
-function closeFence(line, char, min) {
-    return new RegExp(
-        "^ {0,3}" + (char === "`" ? "`" : "~") + "{" + min + ",}[ \t]*$"
-    ).test(line);
-}
-function scanBlocks(text) {
-    const lines = text.split("\n"),
-        starts = [];
-    let p = 0;
-    for (const line of lines) {
-        starts.push(p);
-        p += line.length + 1;
-    }
-    const out = [],
-        blank = (s) => /^\s*$/.test(s),
-        atx = (s) => !!blockMatch(s, "heading"),
-        quote = (s) => !!blockMatch(s, "quote"),
-        bullet = (s) => blockMatch(s, "list")?.rule.tag === "ul",
-        ordered = (s) => blockMatch(s, "list")?.rule.tag === "ol",
-        setext = (s) => !!blockMatch(s, "setext");
-    let lastContent = lines.length - 1;
-    while (lastContent >= 0 && blank(lines[lastContent])) lastContent--;
-    let i = 0;
-    while (i < lines.length) {
-        if (blank(lines[i])) {
-            i++;
-            continue;
-        }
-        const firstLine = i + 1;
-        const start = starts[i],
-            f = blockMatch(lines[i], "fence")?.match;
-        if (f) {
-            const c = f[1][0],
-                n = f[1].length;
-            i++;
-            while (i < lines.length && !closeFence(lines[i], c, n)) i++;
-            if (i < lines.length) i++;
-        } else if (atx(lines[i]) || !!blockMatch(lines[i], "rule")) i++;
-        else if (
-            blockMatch(lines[i]) &&
-            !["quote", "list", "setext"].includes(
-                blockMatch(lines[i]).rule.markdown.kind
-            )
-        )
-            i++;
-        else if (quote(lines[i])) {
-            while (i < lines.length && quote(lines[i])) i++;
-        } else if (bullet(lines[i])) {
-            while (i < lines.length && bullet(lines[i])) i++;
-        } else if (ordered(lines[i])) {
-            while (i < lines.length && ordered(lines[i])) i++;
-        } else {
-            i++;
-            while (i < lines.length && !blank(lines[i])) {
-                if (setext(lines[i])) {
-                    i++;
-                    break;
-                }
-                if (
-                    atx(lines[i]) ||
-                    !!blockMatch(lines[i], "rule") ||
-                    !!blockMatch(lines[i], "fence") ||
-                    quote(lines[i]) ||
-                    bullet(lines[i]) ||
-                    ordered(lines[i]) ||
-                    (blockMatch(lines[i]) &&
-                        !blockMatch(lines[i]).rule.markdown.kind)
-                )
-                    break;
-                i++;
-            }
-        }
-        const hasLaterContent = i <= lastContent;
-        const end = !hasLaterContent
-            ? text.length
-            : i < lines.length
-              ? starts[i - 1] + lines[i - 1].length
-              : text.length;
-        out.push({ text: text.slice(start, end), start, end, firstLine });
-    }
-    return out;
-}
-function mappedText(records, parent, text, localStart, blockStart = 0, literal = false) {
-    const n = document.createTextNode(text);
-    const start = blockStart + localStart, end = start + text.length;
-    setSourceMap(n, Array.from({ length: text.length }, (_, i) => [start + i, start + i + 1]));
-    records.push(setEditorDetails(n, { start, contentStart: start, contentEnd: end, end,
-        kind: "text", language: "markdown", literal,
-        ...(literal ? { syntax: { rule: "literal", complete: false } } : {}) }));
-    parent.append(n);
-    return n;
-}
-function markdownRange(records, node, start, contentStart, contentEnd, end, blockStart = 0,
-    positionBoundary = false) {
-    const sourceStart = blockStart + start;
-    const sourceEnd = blockStart + end;
-    const voidNode = /^(?:BR|HR)$/.test(node.tagName);
-    records.push(setEditorDetails(node, {
-        start: sourceStart,
-        contentStart: blockStart + contentStart,
-        contentEnd: blockStart + contentEnd,
-        end: sourceEnd,
-        kind: "element", language: "markdown", tag: node.localName,
-        void: voidNode, positionBoundary
-    }));
-}
-// Marker and line offsets are relative to the owning block/record. Moving a
-// record therefore moves all of its references without rewriting every marker.
-function lineReferences(block) {
-    let offset = 0;
-    return block.text.split("\n").map((text, i) => {
-        const matched = blockMatch(text), kind = matched?.rule.markdown.kind;
-        const match = matched?.match;
-        let marker = null;
-        if (kind) {
-            let from = text.search(/\S/), to = from;
-            let symbol = text[from], width = 1;
-            if (kind === "heading" || kind === "fence") {
-                width = match[1].length;
-                from = text.indexOf(match[1]);
-                to = from + width;
-            } else if (kind === "quote") to = from + 1;
-            else if (kind === "list") {
-                symbol = text.slice(0, match[0].length - match[1].length).trim();
-                to = from + symbol.length;
-            } else {
-                to = text.trimEnd().length;
-                width = text.slice(from, to).replace(/\s/g, "").length;
-            }
-            marker = { start: offset + from, end: offset + to, symbol, width };
-        }
-        const line = { start: offset, end: offset + text.length,
-            number: (block.firstLine || 1) + i, rule: matched?.rule.name || "paragraph", marker };
-        offset += text.length + 1;
-        return line;
-    });
+import parseMarkdown from "./parsers/markdown.js";
+import { bindEditorNode, createEditorsFromRecords } from "./utilities/createEditor.js";
+
+const renderedState = new WeakMap();
+const isVisibleText = detail => ["text", "codeText", "whitespace", "tab", "lineBreak"].includes(detail.kind);
+
+/** Build Markdown editor state from source and its flat detail records. */
+export async function createMarkdownEditor(source, editor = null) {
+    const details = createEditorsFromRecords(await parseMarkdown(source), editor);
+    return { type: "markdown", source, details, element: editor,
+        update: updateMarkdownEditorDetails };
 }
 
-function setBlockRange(records, root, block, contentStart = 0, contentEnd = block.text.length, matched = null) {
-    markdownRange(records, root, block.start, block.start + contentStart,
-        block.start + contentEnd, block.end);
-    const details = getEditorDetails(root), lines = lineReferences(block);
-    const sourceLines = block.text.split("\n");
-    let opening = null, closing = null, complete = true;
-    const kind = matched?.rule.markdown.kind;
-    if (kind === "heading") opening = lines[0].marker;
-    else if (kind === "setext") closing = lines[1]?.marker || null;
-    else if (kind === "fence") {
-        opening = lines[0].marker;
-        const marker = matched.match[1];
-        const index = sourceLines.findIndex((line, i) => i > 0 && closeFence(line, marker[0], marker.length));
-        closing = index < 0 ? null : lines[index].marker;
-        complete = root.nodeName === "PRE";
-    } else if (kind === "rule") {
-        const text = sourceLines[0], start = text.search(/\S/), end = text.trimEnd().length;
-        opening = { start, end, symbol: text[start], width: text.slice(start,end).replace(/\s/g, "").length };
-    } else if (matched) {
-        opening = contentStart ? { start: 0, end: contentStart } : null;
-        closing = contentEnd < block.text.length ? { start: contentEnd, end: block.text.length } : null;
-    }
-    details.block = true;
-    details.lines = lines;
-    details.definition = matched?.rule || syntaxRules.find(rule => rule.name === "paragraph");
-    details.syntax = { rule: matched?.rule.name || "paragraph", opening, closing, complete };
-    return root;
+function appendSourceText(parent, detail) {
+    const text = parent.ownerDocument.createTextNode(detail.value);
+    if (detail.token) {
+        const span = parent.ownerDocument.createElement("span");
+        span.className = `token-${detail.token}`;
+        span.append(text);
+        parent.append(span);
+    } else parent.append(text);
+    bindEditorNode(detail, text);
 }
-function escaped(text, position) {
-    let slashes = 0;
-    for (let i = position - 1; i >= 0 && text[i] === "\\"; i--)
-        slashes++;
-    return slashes % 2 === 1;
-}
-function nextDelimiter(text, delimiter, from) {
-    let position = text.indexOf(delimiter, from);
-    while (position >= 0 && escaped(text, position))
-        position = text.indexOf(delimiter, position + delimiter.length);
-    return position;
-}
-// Keep source length unchanged so regex matches still use canonical offsets.
-// Syntax inside a complete code span is data, even when an outer rule spans it.
-function maskCodeSyntax(text) {
-    const masked = text.split("");
-    const ticks = /`+/g;
-    let open;
-    while ((open = ticks.exec(text))) {
-        if (escaped(text, open.index)) continue;
-        const closers = /`+/g;
-        closers.lastIndex = ticks.lastIndex;
-        let close;
-        while ((close = closers.exec(text)) &&
-            (close[0].length !== open[0].length || escaped(text, close.index))) {}
-        if (!close) break;
-        for (let i = ticks.lastIndex; i < close.index; i++)
-            if (/[*_\[\]()]/.test(text[i])) masked[i] = "\uE000";
-        ticks.lastIndex = closers.lastIndex;
-    }
-    return masked.join("");
-}
-function sourceMatch(match, source) {
-    const original = Array.from(match, (_, i) =>
-        match.indices[i] ? source.slice(...match.indices[i]) : undefined);
-    original.index = match.index;
-    original.input = source;
-    if (match.indices.groups)
-        original.groups = Object.fromEntries(Object.entries(match.indices.groups)
-            .map(([name, range]) => [name, range ? source.slice(...range) : undefined]));
-    return original;
-}
-function wholeDelimiter(match, text, rule) {
-    if (!["strong", "emphasis"].includes(rule.name)) return true;
-    const char = match[0][0], end = match.index + match[0].length;
-    const width = rule.name === "strong" ? 2 : 1;
-    // A surviving fragment of ** must not be reinterpreted as a single * pair.
-    return !escaped(text, end - width) &&
-        text[match.index - 1] !== char && text[end] !== char &&
-        (rule.name !== "emphasis" || match[0][1] !== char);
-}
-// An unfinished outer construct owns its remaining source as literal text.
-// Completed constructs before it can still render normally.
-function unfinishedInlineStart(text, from) {
-    const openers = /\*\*|__|\*|_|\[[^\]]*\]\(/g;
-    openers.lastIndex = from;
-    let match;
-    while ((match = openers.exec(text))) {
-        if (escaped(text, match.index)) continue;
-        if (match[0].length === 1 && (match[0] === "*" || match[0] === "_") &&
-            (/\s/.test(text[openers.lastIndex] ?? "") ||
-                /[\p{L}\p{N}]/u.test(text[match.index - 1] ?? "")))
+
+function appendInline(parent, records, heading = false, listItem = false, lineBreakMode = "skip") {
+    const stack = [parent];
+    let skipHeadingSpace = heading;
+    let listMarkerSeen = false;
+    let skipListSpace = false;
+    let skipQuoteSpace = false;
+    let skipImageText = false;
+    for (const detail of records) {
+        const syntax = detail.syntax;
+        if (syntax === "image-close") { skipImageText = false; continue; }
+        if (skipImageText) continue;
+        if (detail.kind === "element" && /^h[1-6]$/.test(detail.tag || "")) {
+            bindEditorNode(detail, parent);
             continue;
-        const closer = match[0][0] === "[" ? ")" : match[0];
-        if (nextDelimiter(text, closer, openers.lastIndex) < 0) return match.index;
+        }
+        if (skipHeadingSpace && detail.kind === "whitespace") {
+            skipHeadingSpace = false;
+            continue;
+        }
+        if (listItem && detail.kind === "whitespace" &&
+            (!listMarkerSeen || skipListSpace)) {
+            if (listMarkerSeen) skipListSpace = false;
+            continue;
+        }
+        if (skipQuoteSpace && detail.kind === "whitespace") {
+            skipQuoteSpace = false;
+            continue;
+        }
+        if (detail.kind === "delimiter" && syntax) {
+            if (syntax === "list-marker") {
+                listMarkerSeen = true;
+                skipListSpace = true;
+                continue;
+            }
+            if (syntax === "blockquote") {
+                skipQuoteSpace = true;
+                continue;
+            }
+            if (syntax === "image-open") {
+                const image = parent.ownerDocument.createElement("img");
+                image.alt = detail.alt || "";
+                const safeSource = safeMarkdownUrl(detail.destination, parent.ownerDocument, true);
+                if (safeSource) image.src = safeSource;
+                stack.at(-1).append(image);
+                skipImageText = true;
+                continue;
+            }
+            if (syntax === "link-open") {
+                const anchor = parent.ownerDocument.createElement("a");
+                const safeHref = safeMarkdownUrl(detail.destination, parent.ownerDocument);
+                if (safeHref) anchor.href = safeHref;
+                stack.at(-1).append(anchor);
+                stack.push(anchor);
+                continue;
+            }
+            if (syntax === "link-close") {
+                if (stack.length > 1 && stack.at(-1).localName === "a") stack.pop();
+                continue;
+            }
+            const openTag = syntax === "strong-open" ? "strong"
+                : syntax === "emphasis-open" ? "em"
+                    : syntax === "strike-open" ? "del"
+                        : syntax === "code-open" ? "code" : null;
+            if (openTag) {
+                const inline = parent.ownerDocument.createElement(openTag);
+                stack.at(-1).append(inline);
+                stack.push(inline);
+            } else if (/-close$/.test(syntax) && stack.length > 1) stack.pop();
+            continue;
+        }
+        if (detail.kind === "lineBreak") {
+            if (lineBreakMode !== "skip") {
+                if (detail.syntax === "hardBreak" || lineBreakMode === "code") {
+                    if (lineBreakMode === "code") {
+                        appendSourceText(stack.at(-1), detail);
+                    } else {
+                        const br = parent.ownerDocument.createElement("br");
+                        stack.at(-1).append(br);
+                        bindEditorNode(detail, br);
+                    }
+                } else {
+                    const text = parent.ownerDocument.createTextNode(" ");
+                    stack.at(-1).append(text);
+                    bindEditorNode(detail, text);
+                }
+            }
+            continue;
+        }
+        if (["blockquote", "list-marker", "link-destination-open", "link-destination",
+            "hardBreakMarker", "link-close", "image-open", "image-close",
+            "setext-heading", "thematic-break", "fence-open", "fence-close"].includes(syntax)) continue;
+        if (!["text", "codeText", "whitespace", "tab"].includes(detail.kind)) continue;
+        appendSourceText(stack.at(-1), detail);
     }
-    return text.length;
 }
-function inline(records, parent, text, base, blockStart, depth = 0) {
-    if (depth > 20) {
-        mappedText(records, parent, text, base, blockStart);
+
+function safeMarkdownUrl(value, ownerDocument, image = false) {
+    if (typeof value !== "string" || !value.trim()) return "";
+    try {
+        const url = new URL(value, ownerDocument.baseURI);
+        const allowed = image ? ["http:", "https:"] : ["http:", "https:", "mailto:", "tel:"];
+        if (!allowed.includes(url.protocol)) return "";
+        // Preserve relative paths in the DOM; URL resolution above is only a
+        // protocol safety check.
+        return value;
+    } catch { return ""; }
+}
+
+function sourceLine(records) {
+    return records.map(detail => detail.value).join("");
+}
+
+function tableCells(line) {
+    return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(cell => cell.trim());
+}
+
+function tableCellRanges(line) {
+    let start = line.search(/\S/);
+    let end = line.length;
+    while (end > start && /\s/.test(line[end - 1])) end--;
+    if (line[start] === "|") start++;
+    if (line[end - 1] === "|") end--;
+    const ranges = [];
+    let cellStart = start;
+    for (let index = start; index <= end; index++) {
+        if (index !== end && line[index] !== "|") continue;
+        let left = cellStart;
+        let right = index;
+        while (left < right && /\s/.test(line[left])) left++;
+        while (right > left && /\s/.test(line[right - 1])) right--;
+        ranges.push({ start: left, end: right });
+        cellStart = index + 1;
+    }
+    return ranges;
+}
+
+function appendTableCellText(cell, records, lineStart, range, starts, textMappings) {
+    for (const detail of records) {
+        const detailStart = starts.get(detail) - lineStart;
+        const detailEnd = detailStart + detail.length;
+        const from = Math.max(detailStart, range.start);
+        const to = Math.min(detailEnd, range.end);
+        if (from >= to || !isVisibleText(detail)) continue;
+        const text = cell.ownerDocument.createTextNode(
+            detail.value.slice(from - detailStart, to - detailStart));
+        cell.append(text);
+        textMappings.push({ node: text, detail, sourceStart: lineStart + from, length: to - from });
+    }
+}
+
+function renderTable(root, headerRecords, delimiterRecords, bodyRows, starts, textMappings) {
+    const document = root.ownerDocument;
+    const table = document.createElement("table");
+    const head = document.createElement("thead");
+    const headerRow = document.createElement("tr");
+    const headerSource = sourceLine(headerRecords);
+    const headings = tableCells(headerSource);
+    const headerRanges = tableCellRanges(headerSource);
+    const alignments = headerRecords[0]?.tableAlignments || [];
+    headings.forEach((value, index) => {
+        const cell = document.createElement("th");
+        appendTableCellText(cell, headerRecords, starts.get(headerRecords[0]), headerRanges[index], starts, textMappings);
+        if (alignments[index]) cell.style.textAlign = alignments[index];
+        headerRow.append(cell);
+    });
+    head.append(headerRow);
+    table.append(head);
+    const body = document.createElement("tbody");
+    for (const records of bodyRows) {
+        const row = document.createElement("tr");
+        const rowSource = sourceLine(records);
+        const values = tableCells(rowSource);
+        const ranges = tableCellRanges(rowSource);
+        values.forEach((value, index) => {
+            const cell = document.createElement("td");
+            appendTableCellText(cell, records, starts.get(records[0]), ranges[index], starts, textMappings);
+            if (alignments[index]) cell.style.textAlign = alignments[index];
+            row.append(cell);
+        });
+        body.append(row);
+    }
+    if (bodyRows.length) table.append(body);
+    root.append(table);
+}
+
+const listKinds = new Set(["orderedList", "unorderedList"]);
+
+function renderList(root, lineEntries, startIndex) {
+    const [firstLine, firstRecords] = lineEntries[startIndex];
+    const firstMarker = firstRecords.find(detail => detail.syntax === "list-marker");
+    const baseIndent = firstMarker?.listIndent || 0;
+    const baseKind = firstMarker?.blockKind || firstRecords.find(detail => listKinds.has(detail.blockKind))?.blockKind;
+    const list = root.ownerDocument.createElement(baseKind === "orderedList" ? "ol" : "ul");
+    if (baseKind === "orderedList" && Number.isInteger(firstMarker?.listStart) && firstMarker.listStart !== 1)
+        list.start = firstMarker.listStart;
+
+    let index = startIndex;
+    let previousLine = firstLine - 1;
+    let lastItem = null;
+    while (index < lineEntries.length) {
+        const [lineNumber, records] = lineEntries[index];
+        const marker = records.find(detail => detail.syntax === "list-marker");
+        const kind = marker?.blockKind || records.find(detail => listKinds.has(detail.blockKind))?.blockKind;
+        if (!marker || !listKinds.has(kind) || lineNumber !== previousLine + 1) break;
+        const indent = marker.listIndent || 0;
+        if (indent < baseIndent) break;
+        if (indent > baseIndent) {
+            if (!lastItem) break;
+            const child = renderList(lastItem, lineEntries, index);
+            lastItem.append(child.node);
+            index = child.nextIndex;
+            previousLine = lineEntries[index - 1][0];
+            continue;
+        }
+        if (kind !== baseKind) break;
+
+        const item = root.ownerDocument.createElement("li");
+        appendInline(item, records, false, true);
+        list.append(item);
+        lastItem = item;
+        previousLine = lineNumber;
+        index++;
+    }
+    return { node: list, nextIndex: index };
+}
+
+/** Render source-backed Markdown details directly inside the editable host. */
+export function renderEditor(element, source, details) {
+    if (!element?.ownerDocument) {
+        if (element) renderedState.delete(element);
         return;
     }
-    const matchingText = maskCodeSyntax(text);
-    let position = 0;
-    while (position < text.length) {
-        let literalStart = unfinishedInlineStart(matchingText, position);
-        let best;
-        const ticks = /`+/g;
-        ticks.lastIndex = position;
-        let opener;
-        while ((opener = ticks.exec(text))) {
-            if (escaped(text, opener.index)) continue;
-            const closers = /`+/g;
-            closers.lastIndex = ticks.lastIndex;
-            let close;
-            while ((close = closers.exec(text)) &&
-                (close[0].length !== opener[0].length || escaped(text, close.index))) {}
-            if (!close) {
-                literalStart = Math.min(literalStart, opener.index);
-                break;
+    const root = element.ownerDocument.createElement("div");
+    const lines = new Map();
+    const starts = new WeakMap();
+    let sourcePosition = 0;
+    for (const detail of details) {
+        starts.set(detail, sourcePosition);
+        sourcePosition += detail.length;
+        if (!lines.has(detail.line)) lines.set(detail.line, []);
+        lines.get(detail.line).push(detail);
+    }
+
+    const lineEntries = [...lines.entries()];
+    const textMappings = [];
+    let fenced = false, codeBlock;
+    for (let lineIndex = 0; lineIndex < lineEntries.length; lineIndex++) {
+        const [lineNumber, records] = lineEntries[lineIndex];
+        const marker = records.find(detail => detail.syntax === "fence-open");
+        const closeFence = records.some(detail => detail.syntax === "fence-close");
+        const heading = records.find(detail => detail.kind === "element" && /^h[1-6]$/.test(detail.tag || ""));
+        const blockKind = records.find(detail => detail.blockKind)?.blockKind || "paragraph";
+        const hasContent = records.some(detail => ["text", "codeText"].includes(detail.kind));
+
+        if (marker) {
+            fenced = true;
+            codeBlock = root.ownerDocument.createElement("pre");
+            const code = root.ownerDocument.createElement("code");
+            const language = marker.resolvedCodeLanguage || marker.codeLanguage;
+            if (language) {
+                code.dataset.language = language;
+                code.classList.add(`language-${language}`);
             }
-            const value = text.slice(ticks.lastIndex, close.index);
-            if (hasMarkdownContent(value))
-                best = {
-                    rule: codeRule, match: opener, value,
-                    offset: ticks.lastIndex, end: closers.lastIndex
-                };
-            ticks.lastIndex = closers.lastIndex;
-            if (best) break;
+            codeBlock.append(code);
+            root.append(codeBlock);
+            continue;
         }
-        for (const definition of syntaxRules) {
-            if (
-                !definition.markdown ||
-                definition === codeRule ||
-                definition.markdown.scope === "block"
-            )
-                continue;
-            const rule = { ...definition, ...definition.markdown };
-            const re = new RegExp(
-                rule.pattern.source,
-                rule.pattern.flags.replace(/[gyd]/g, "") + "gd"
-            );
-            re.lastIndex = position;
-            let candidate;
-            while ((candidate = re.exec(matchingText))) {
-                const match = sourceMatch(candidate, text);
-                if (!match[0].length) {
-                    re.lastIndex++;
-                    continue;
+        if (fenced) {
+            if (!closeFence && codeBlock) appendInline(codeBlock.firstChild, records, false, false, "code");
+            if (closeFence) fenced = false;
+            continue;
+        }
+        if (blockKind === "tableHeader") {
+            const delimiter = lineEntries[lineIndex + 1]?.[1];
+            if (delimiter?.some(detail => detail.blockKind === "tableDelimiter")) {
+                const bodyRows = [];
+                lineIndex++;
+                let expectedLine = lineNumber + 2;
+                while (lineEntries[lineIndex + 1]?.[0] === expectedLine &&
+                    lineEntries[lineIndex + 1][1].some(detail => detail.blockKind === "tableRow")) {
+                    bodyRows.push(lineEntries[++lineIndex][1]);
+                    expectedLine++;
                 }
-                if (escaped(text, match.index)) continue;
-                if (!wholeDelimiter(match, text, definition)) continue;
-                if (definition.name === "link" &&
-                    escaped(text, match.index + match[0].length - 1)) continue;
-                const value = String(rule.content(match) ?? "");
-                if (!hasMarkdownContent(value)) continue;
-                if (match.index >= literalStart) break;
-                if (!best || match.index < best.match.index)
-                    best = { rule, match, value };
-                break;
+                renderTable(root, records, delimiter, bodyRows, starts, textMappings);
+                continue;
             }
         }
-        if (!best || best.match.index >= literalStart) {
-            const node = mappedText(records, parent, text.slice(position), base + position, blockStart, literalStart < text.length);
-            if (literalStart < text.length) {
-                const marker = /^(?:\*+|_+|`+|\[)/.exec(text.slice(literalStart))?.[0];
-                if (marker) getEditorDetails(node).syntax.opening = {
-                    start: literalStart - position, end: literalStart - position + marker.length,
-                    symbol: marker[0], width: marker.length
-                };
+        if (blockKind === "unorderedList" || blockKind === "orderedList") {
+            const result = renderList(root, lineEntries, lineIndex);
+            root.append(result.node);
+            lineIndex = result.nextIndex - 1;
+            continue;
+        }
+        if (blockKind === "quote") {
+            const quote = root.ownerDocument.createElement("blockquote");
+            const paragraph = root.ownerDocument.createElement("p");
+            const quoteRecords = [...records];
+            while (lineEntries[lineIndex + 1]?.[0] === lineEntries[lineIndex][0] + 1 &&
+                lineEntries[lineIndex + 1][1].some(detail => detail.blockKind === "quote")) {
+                quoteRecords.push(...lineEntries[++lineIndex][1]);
             }
-            break;
+            const last = quoteRecords.at(-1);
+            if (last?.kind === "lineBreak" && last.syntax !== "hardBreak") quoteRecords.pop();
+            appendInline(paragraph, quoteRecords, false, false, "paragraph");
+            quote.append(paragraph);
+            root.append(quote);
+            continue;
         }
-        const { rule, match, value } = best;
-        if (match.index > position)
-            mappedText(records,
-                parent,
-                text.slice(position, match.index),
-                base + position,
-                blockStart
-            );
-        const node = makeElement(rule, match);
-        if (rule !== codeRule)
-            applyAttributes(node, rule.attributes?.(match) || {});
-        const offset = rule === codeRule
-            ? base + best.offset
-            : base + match.index + rule.offset(match);
-        if (rule.literal) mappedText(records, node, value, offset, blockStart);
-        else inline(records, node, value, offset, blockStart, depth + 1);
-        const end = base + (best.end ?? match.index + match[0].length);
-        markdownRange(records, node, base + match.index, offset,
-            offset + value.length, end, blockStart, true);
-        const details = getEditorDetails(node), start = base + match.index;
-        details.definition = rule;
-        details.syntax = {
-            rule: rule.name,
-            opening: { start: 0, end: offset - start, symbol: match[0][0], width: offset - start },
-            closing: { start: offset + value.length - start, end: end - start,
-                symbol: rule.name === "link" ? ")" : match[0][0] },
-            complete: true
-        };
-        parent.append(node);
-        position = end - base;
+        if (blockKind === "rule") {
+            root.append(root.ownerDocument.createElement("hr"));
+            continue;
+        }
+        if (blockKind === "setext") continue;
+        if (!hasContent && !heading) continue;
+
+        let paragraphRecords = records;
+        let setextTag = null;
+        const nextLine = lineEntries[lineIndex + 1];
+        if (nextLine?.[0] === lineNumber + 1 &&
+            nextLine[1].some(detail => detail.blockKind === "setext")) {
+            setextTag = nextLine[1].find(detail => detail.tag === "h1" || detail.tag === "h2")?.tag || "h2";
+            paragraphRecords = records.filter(detail => detail.kind !== "lineBreak");
+            lineIndex++;
+        } else if (blockKind === "paragraph") {
+            paragraphRecords = [...records];
+            while (lineEntries[lineIndex + 1]?.[0] === lineEntries[lineIndex][0] + 1 &&
+                lineEntries[lineIndex + 1][1].some(detail => detail.blockKind === "paragraph") &&
+                lineEntries[lineIndex + 1][1].some(detail => ["text", "codeText"].includes(detail.kind))) {
+                paragraphRecords.push(...lineEntries[++lineIndex][1]);
+            }
+            const finalDetail = paragraphRecords.at(-1);
+            if (finalDetail?.kind === "lineBreak" && finalDetail.syntax !== "hardBreak")
+                paragraphRecords.pop();
+        }
+        const tag = heading?.tag || setextTag || (blockKind === "quote" ? "blockquote" : "p");
+        const block = root.ownerDocument.createElement(tag);
+        const content = block;
+        appendInline(content, paragraphRecords, !!heading, false,
+            blockKind === "paragraph" && !heading ? "paragraph" : "skip");
+        if (!hasContent && heading) {
+            const placeholder = root.ownerDocument.createElement("br");
+            placeholder.setAttribute("data-markdown-placeholder", "");
+            content.append(placeholder);
+        }
+        root.append(block);
     }
-}
-function parseBlock(records, block) {
-    const text = block.text,
-        rootLine = text.split("\n")[0];
-    let root, contentStart = 0, contentEnd = text.length, definitionMatch = null;
-    const node = (tag, definition, match) => {
-        const x = definition
-            ? makeElement(definition, match)
-            : document.createElement(tag);
-        if (definition)
-            applyAttributes(x, definition.markdown.attributes?.(match) || {});
-        x.classList.add("md-block");
-        return x;
-    };
-    const heading = blockMatch(rootLine, "heading");
-    const h = heading?.match;
-    const fence = blockMatch(rootLine, "fence"), f = fence?.match;
-    const custom = blockMatch(rootLine);
-    if (custom && !custom.rule.markdown.kind) {
-        const root = makeElement(custom.rule, custom.match),
-            md = custom.rule.markdown;
-        applyAttributes(root, md.attributes?.(custom.match) || {});
-        const value = String(md.content(custom.match));
-        if (custom.rule.literal)
-            mappedText(records, root, value, md.offset(custom.match), block.start);
-        else inline(records, root, value, md.offset(custom.match), block.start);
-        return setBlockRange(records, root, block, md.offset(custom.match),
-            md.offset(custom.match) + value.length, custom);
-    }
-    const setext = text.split("\n");
-    if (!h && setext.length >= 2 && !!blockMatch(setext[1], "setext")) {
-        const underline = blockMatch(setext[1], "setext");
-        definitionMatch = underline;
-        root = node(underline.rule.tag, underline.rule, underline.match);
-        contentEnd = rootLine.length;
-        inline(records, root, rootLine, 0, block.start);
-    } else if (h) {
-        definitionMatch = heading;
-        root = node(heading.rule.tag, heading.rule, h);
-        const start = h.index + h[0].length - h[2].length;
-        contentStart = start;
-        contentEnd = start + h[2].length;
-        inline(records, root, h[2], start, block.start);
-    } else if (f) {
-        definitionMatch = fence;
-        const lines = text.split("\n"), bodyStart = rootLine.length + 1;
-        const relativeClose = lines.slice(1).findIndex(
-            (line) => closeFence(line, f[1][0], f[1].length)
-        );
-        const close = relativeClose < 0 ? -1 : relativeClose + 1;
-        const body = close < 0 ? "" : lines.slice(1, close).join("\n");
-        if (close < 0 || !hasMarkdownContent(body)) {
-            // An incomplete fence protects its contents from every other rule.
-            root = node("p");
-            mappedText(records, root, text, 0, block.start, true);
-        } else {
-            root = node("pre");
-            const code = document.createElement("code");
-            contentStart = bodyStart;
-            contentEnd = bodyStart + body.length;
-            mappedText(records, code, body, bodyStart, block.start);
-            markdownRange(records, code, 0, contentStart, contentEnd,
-                lines.slice(0, close + 1).join("\n").length, block.start);
-            const language = rootLine.slice(f[0].length).trim();
-            if (/^[\w-]+$/.test(language)) code.classList.add(`language-${language}`);
-            root.append(code);
-        }
-    } else if (blockMatch(rootLine, "quote")) {
-        const quote = blockMatch(rootLine, "quote");
-        definitionMatch = quote;
-        root = node(quote.rule.tag, quote.rule, quote.match);
-        const p = document.createElement("p");
-        let offset = 0;
-        for (const line of text.split("\n")) {
-            const content = blockMatch(line, "quote")?.match[1] ?? line;
-            const prefix = line.length - content.length;
-            if (offset) mappedText(records, p, "\n", offset - 1, block.start);
-            inline(records, p, content, offset + prefix, block.start);
-            offset += line.length + 1;
-        }
-        markdownRange(records, p, 0, rootLine.length - quote.match[1].length,
-            text.length, text.length, block.start);
-        root.append(p);
-    } else if (blockMatch(rootLine, "list") && !blockMatch(rootLine, "rule")) {
-        const list = blockMatch(rootLine, "list"),
-            tag = list.rule.tag;
-        definitionMatch = list;
-        root = node(tag, list.rule, list.match);
-        let offset = 0;
-        for (const line of text.split("\n")) {
-            const m = new RegExp(list.rule.markdown.pattern.source).exec(line);
-            if (!m) continue;
-            const li = document.createElement("li"),
-                contentStart = m.index + m[0].length - m[1].length;
-            inline(records, li, m[1], offset + contentStart, block.start);
-            markdownRange(records, li, offset, offset + contentStart,
-                offset + line.length, offset + line.length, block.start);
-            root.append(li);
-            offset += line.length + 1;
-        }
-    } else if (blockMatch(rootLine, "rule")) {
-        const rule = blockMatch(rootLine, "rule");
-        definitionMatch = rule;
-        root = node(rule.rule.tag, rule.rule, rule.match);
-        contentStart = contentEnd = rootLine.length;
-        root.setAttribute("contenteditable", "false");
-    } else {
-        root = node("p");
-        const trailing = (text.match(/\n+$/) || [""])[0].length;
-        inline(records, root, trailing ? text.slice(0, -trailing) : text, 0, block.start);
-        for (let i = 0; i < trailing; i++) {
-            const br = document.createElement("br");
-            markdownRange(records, br, text.length - trailing + i,
-                text.length - trailing + i, text.length - trailing + i + 1,
-                text.length - trailing + i + 1, block.start, true);
-            root.append(br);
-        }
-    }
-    if (!root.matches("p")) {
-        const trailing = (text.match(/\n+$/) || [""])[0].length;
-        for (let i = 0; i < trailing; i++) {
-            const br = document.createElement("br");
-            markdownRange(records, br, text.length - trailing + i,
-                text.length - trailing + i, text.length - trailing + i + 1,
-                text.length - trailing + i + 1, block.start, true);
-            root.append(br);
-        }
-    }
-    if (/\n$/.test(text)) {
-        const placeholder = document.createElement("br");
-        markPlaceholder(placeholder);
-        markdownRange(records, placeholder, text.length, text.length, text.length,
-            text.length, block.start);
+    if (source.endsWith("\n")) {
+        const trailingBreak = [...details].reverse().find(detail => detail.kind === "lineBreak");
+        const placeholder = root.ownerDocument.createElement("p");
+        placeholder.setAttribute("data-markdown-placeholder-block", "");
+        const line = root.ownerDocument.createElement("br");
+        line.setAttribute("data-markdown-placeholder", "");
+        placeholder.append(line);
         root.append(placeholder);
+        if (trailingBreak) bindEditorNode(trailingBreak, placeholder);
     }
-    return setBlockRange(records, root, block, contentStart, contentEnd, definitionMatch);
-}
-function finishRecords(root, records, source, offset = 0, firstLine = 1) {
-    const starts = [0];
-    for (let i = 0; i < source.length; i++) if (source[i] === "\n") starts.push(i + 1);
-    const lineAt = position => {
-        let low = 0, high = starts.length;
-        while (low < high) {
-            const middle = (low + high) >>> 1;
-            if (starts[middle] <= position - offset) low = middle + 1;
-            else high = middle;
+    element.replaceChildren(...root.childNodes);
+
+    const textDetails = new WeakMap();
+    const nodeDetails = new WeakMap();
+    for (const detail of details) {
+        if (detail.liveNode) {
+            nodeDetails.set(detail.liveNode, detail);
+            if (detail.liveNode.nodeType === 3 && isVisibleText(detail))
+                textMappings.push({ node: detail.liveNode, detail,
+                    sourceStart: starts.get(detail), length: detail.length });
         }
-        return firstLine + low - 1;
+    }
+    for (const mapping of textMappings) textDetails.set(mapping.node, mapping);
+    textMappings.sort((a, b) => a.sourceStart - b.sourceStart);
+    renderedState.set(element, { source, details, starts, textDetails, textMappings, nodeDetails });
+}
+
+function inlineSource(node) {
+    if (node.nodeType === 3) return node.data;
+    const content = [...node.childNodes].map(inlineSource).join("");
+    switch (node.localName) {
+        case "strong": case "b": return `**${content}**`;
+        case "em": case "i": return `*${content}*`;
+        case "del": case "s": return `~~${content}~~`;
+        case "code": return `\`${content}\``;
+        case "br": return node.hasAttribute("data-markdown-placeholder") ? "" : "\n";
+        default: return content;
+    }
+}
+
+/** Serialize the editable Markdown projection back to canonical Markdown source. */
+export function getSource(element) {
+    const state = renderedState.get(element);
+    if (state) return state.pendingSource ?? state.source;
+    const blocks = [];
+    for (const node of element.childNodes) {
+        if (node.nodeType === 1 && node.hasAttribute("data-markdown-placeholder-block")) continue;
+        if (node.nodeType === 3) {
+            if (node.data.trim()) blocks.push(node.data);
+            continue;
+        }
+        const content = [...node.childNodes].map(inlineSource).join("");
+        if (/^H[1-6]$/.test(node.tagName)) blocks.push(`${"#".repeat(Number(node.tagName[1]))} ${content}`);
+        else if (node.tagName === "BLOCKQUOTE")
+            blocks.push(content.split("\n").map(line => `> ${line}`).join("\n"));
+        else if (node.tagName === "UL" || node.tagName === "OL")
+            blocks.push([...node.querySelectorAll(":scope > li")].map((item, index) =>
+                `${node.tagName === "UL" ? "-" : `${index + 1}.`} ${[...item.childNodes].map(inlineSource).join("")}`
+            ).join("\n"));
+        else if (node.tagName === "PRE") blocks.push(`\`\`\`\n${node.textContent}\n\`\`\``);
+        else if (node.tagName === "HR") blocks.push("---");
+        else blocks.push(content);
+    }
+    return blocks.join("\n\n");
+}
+
+function pointOffset(state, root, node, offset) {
+    if (!node) return null;
+    const textMapping = state.textDetails.get(node);
+    if (textMapping) return textMapping.sourceStart + Math.min(offset, textMapping.length);
+
+    let ancestor = node.nodeType === 1 ? node : node.parentNode;
+    while (ancestor && ancestor !== root) {
+        const detail = state.nodeDetails.get(ancestor);
+        if (detail) {
+            const start = state.starts.get(detail);
+            if (detail.kind === "lineBreak") return start + detail.length;
+            if (detail.kind === "element" && /^h[1-6]$/.test(detail.tag || "")) {
+                let contentStart = start + detail.length;
+                for (let index = state.details.indexOf(detail) + 1; index < state.details.length; index++) {
+                    const next = state.details[index];
+                    if (next.line !== detail.line || !["whitespace", "tab"].includes(next.kind)) break;
+                    contentStart += next.length;
+                }
+                return contentStart;
+            }
+            return start;
+        }
+        ancestor = ancestor.parentNode;
+    }
+    return null;
+}
+
+/** Read native selection offsets in Markdown source coordinates. */
+export function getSelection(element, range) {
+    const state = renderedState.get(element);
+    if (!range && state?.pendingSelection) return state.pendingSelection;
+    const selection = range || element.ownerDocument?.getSelection?.();
+    if (!state || !selection) return null;
+    const anchorNode = range?.startContainer || selection.anchorNode;
+    const anchorOffset = range?.startOffset ?? selection.anchorOffset;
+    const focusNode = range?.endContainer || selection.focusNode;
+    const focusOffset = range?.endOffset ?? selection.focusOffset;
+    const anchor = pointOffset(state, element, anchorNode, anchorOffset);
+    const head = pointOffset(state, element, focusNode, focusOffset);
+    if (anchor === null || head === null) return null;
+    return { start: Math.min(anchor, head), end: Math.max(anchor, head), anchor, head };
+}
+
+function insertValue(inputType, event) {
+    if (["insertParagraph", "insertLineBreak"].includes(inputType)) return "\n";
+    if (["insertText", "insertReplacementText", "insertCompositionText", "insertFromPaste",
+        "insertFromDrop", "insertFromYank"].includes(inputType))
+        return typeof event.data === "string" ? event.data
+            : event.dataTransfer?.getData("text/plain") || event.clipboardData?.getData("text/plain") || null;
+    return null;
+}
+
+function deletedLength(source, position, inputType) {
+    if (inputType.endsWith("Backward")) {
+        if (position <= 0) return 0;
+        const previous = source.charCodeAt(position - 1);
+        return previous >= 0xdc00 && previous <= 0xdfff && position > 1 &&
+            source.charCodeAt(position - 2) >= 0xd800 && source.charCodeAt(position - 2) <= 0xdbff ? 2 : 1;
+    }
+    if (position >= source.length) return 0;
+    const current = source.charCodeAt(position);
+    return current >= 0xd800 && current <= 0xdbff && position + 1 < source.length &&
+        source.charCodeAt(position + 1) >= 0xdc00 && source.charCodeAt(position + 1) <= 0xdfff ? 2 : 1;
+}
+
+/** Read native edits in source coordinates, including edits beside hidden syntax. */
+export function readInputSource(element, event, selection) {
+    const state = renderedState.get(element);
+    if (!state || !event || !selection) return getSource(element);
+    const { start, end } = selection;
+    const value = insertValue(event.inputType, event);
+    let removed = end - start;
+    let inserted = value;
+    if (value === null && /^delete/.test(event.inputType || "")) {
+        inserted = "";
+        if (!removed) removed = deletedLength(state.source, start, event.inputType);
+    }
+    if (typeof inserted !== "string") return getSource(element);
+    const previousSource = state.pendingSource ?? state.source;
+    const source = previousSource.slice(0, start) + inserted + previousSource.slice(start + removed);
+    const caret = start + inserted.length;
+    state.pendingSource = source;
+    state.pendingSelection = { start: caret, end: caret, anchor: caret, head: caret };
+    return source;
+}
+
+/** Place a source selection back into the rendered Markdown projection. */
+export function setSelection(element, { start, end = start, anchor = start, head = end } = {}) {
+    const state = renderedState.get(element);
+    const selection = element.ownerDocument?.getSelection?.();
+    if (!state || !selection || !Number.isInteger(start) || !Number.isInteger(end)) return false;
+
+    const point = offset => {
+        let previous = null;
+        for (const detail of state.details) {
+            if (detail.kind === "lineBreak" && detail.liveNode &&
+                state.starts.get(detail) + detail.length === offset &&
+                detail.liveNode.hasAttribute("data-markdown-placeholder-block"))
+                return [detail.liveNode, 0];
+        }
+        for (const mapping of state.textMappings) {
+            const { node, sourceStart: detailStart, length } = mapping;
+            const detailEnd = detailStart + length;
+            if (detailStart <= offset && offset <= detailEnd) {
+                return [node, Math.min(offset - detailStart, node.data.length)];
+            }
+            if (detailStart > offset) break;
+            previous = [node, node.data.length];
+        }
+
+        // Hidden block syntax has no text node. Put the caret at the start of
+        // its rendered element so typing continues in the source content.
+        for (const detail of state.details) {
+            if (detail.kind !== "element" || !/^h[1-6]$/.test(detail.tag || "") || !detail.liveNode) continue;
+            const contentStart = pointOffset(state, element, detail.liveNode, 0);
+            if (contentStart === offset) {
+                const text = detail.liveNode.firstChild;
+                return text?.nodeType === 3 ? [text, 0] : [detail.liveNode, 0];
+            }
+        }
+        if (previous) return previous;
+        return [element, 0];
     };
-    for (const item of records) {
-        item.parentDetails = getEditorDetails(item.detachDOM.parentNode) || null;
-        item.firstLine = lineAt(item.start);
-        item.lastLine = lineAt(item.end);
-    }
-    setParsedDetails(root, records);
-    return root;
-}
 
-export default function createMarkdownDOM(source, liveRoot) {
-    const records = [];
-    const staging = document.createElement("div");
-    records.push(setEditorDetails(staging, {
-        start: 0, contentStart: 0, contentEnd: source.length, end: source.length,
-        kind: "root", language: "markdown", tag: "div"
-    }));
-    const blocks = scanBlocks(source);
-    if (!blocks.length && source)
-        staging.append(
-            parseBlock(records, { text: source, start: 0, end: source.length, firstLine: 1 })
-        );
+    const [anchorNode, anchorOffset] = point(anchor);
+    const [headNode, headOffset] = point(head);
+    selection.removeAllRanges();
+    if (selection.setBaseAndExtent) selection.setBaseAndExtent(anchorNode, anchorOffset, headNode, headOffset);
     else {
-        if (blocks[0]?.start)
-            staging.append(
-                parseBlock(records, {
-                    text: source.slice(0, blocks[0].start),
-                    start: 0,
-                    end: blocks[0].start,
-                    firstLine: 1
-                })
-            );
-        for (const block of blocks) staging.append(parseBlock(records, block));
+        const range = element.ownerDocument.createRange();
+        range.setStart(anchorNode, anchorOffset);
+        range.setEnd(headNode, headOffset);
+        selection.addRange(range);
     }
-    finishRecords(staging, records, source);
-    if (liveRoot) {
-        reconcileMirror(staging, liveRoot);
-        observeIndexedDOM(staging, getEditorDetails(staging).editorElement, liveRoot);
-    }
-    return staging;
+    return true;
 }
 
-
-// A same-line content edit can reuse the existing block boundary only when
-// the line's block syntax and the parsed block's shape/boundaries still agree.
-// Newlines, changed block markers, and fences escaping that boundary use the
-// full parser; the resulting records still use the very same mutation planner.
-function renderRegion(source, element, change) {
-    const previous = String(element.value ?? "");
-    const end = change.start + change.length;
-    if (change.value.includes("\n") || previous.slice(change.start, end).includes("\n")) return;
-    let block = findEditorDetailsContaining(element, change.start, end);
-    while (block && !block.block) block = block.parentDetails;
-    if (!block || change.start < block.start || end > block.end) return;
-    let low = 0, high = block.lines.length;
-    while (low < high) {
-        const middle = (low + high) >>> 1;
-        if (block.lines[middle].start <= change.start - block.start) low = middle + 1;
-        else high = middle;
-    }
-    const line = block.lines[low - 1];
-    if (!line) return;
-    const lineStart = block.start + line.start, lineEnd = block.start + line.end;
-    if (end > lineEnd) return;
-    const newLine = previous.slice(lineStart, change.start) + change.value + previous.slice(end, lineEnd);
-    if (/^\s*$/.test(newLine) || line.rule !== (blockMatch(newLine)?.rule.name || "paragraph")) return;
-    const finish = block.end + change.value.length - change.length;
-    const raw = source.slice(block.start, finish), blocks = scanBlocks(raw);
-    if (blocks.length !== 1 || blocks[0].start !== 0 || blocks[0].end !== raw.length) return;
-    const records = [];
-    const root = parseBlock(records, { text: raw, start: block.start, end: finish, firstLine: block.firstLine });
-    if (root.localName !== block.tag) return;
-    finishRecords(root, records, raw, block.start, block.firstLine);
-    setUpdateRegion(root, block);
-    return root;
+/** Reparse and render the resulting source so edits and initial load agree. */
+export async function updateEditor(element, update, previousSource) {
+    const { start, value } = update;
+    const end = Number.isInteger(update.end) ? update.end : start + update.length;
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start ||
+        end > previousSource.length || typeof value !== "string")
+        throw new RangeError("Markdown update must contain a valid source range and string value.");
+    const source = previousSource.slice(0, start) + value + previousSource.slice(end);
+    if (typeof update.string === "string" && update.string !== source)
+        throw new RangeError("CRDT update does not match the previous Markdown source.");
+    const editorDetails = createEditorsFromRecords(await parseMarkdown(source), element);
+    renderEditor(element, source, editorDetails);
+    return { previousSource, source, editorDetails, start, end, value };
 }
 
-export const mode = {
-    render(source, element, change, previousRoot) {
-        const region = previousRoot && !hasIndexedMutations(element.editor.dom) && renderRegion(source, element, change);
-        return region || createMarkdownDOM(source);
-    },
-    apply: applyIndexedDOM,
-    afterMirror(root, live, element) { observeIndexedDOM(root, element, live); }
-};
+export function updateMarkdownEditorDetails(details, update, { editor } = {}) {
+    return updateEditor(editor, update, details.map(detail => detail.value).join(""));
+}
+
+export { parseMarkdown };
+export default createMarkdownEditor;

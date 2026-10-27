@@ -31,8 +31,8 @@ async function fixture(run, { source = 'alpha beta', tag = 'div', echo = false }
     try {
         await page.goto(origin);
         await page.evaluate(async ({ source, tag, echo }) => {
-            const { createPrototypeCore } = await import('/prototype/core.js');
-            const selection = await import('/prototype/selection.js');
+            const { createEditorCore } = await import('/core.js');
+            const selection = await import('/selection.js');
             window.editor = document.createElement(tag);
             editor.setAttribute('editor', 'text');
             editor.value = source; // The demo also seeds contenteditable divs this way.
@@ -42,7 +42,7 @@ async function fixture(run, { source = 'alpha beta', tag = 'div', echo = false }
                 editor.style.minHeight = '2em';
             }
             document.body.append(editor);
-            window.core = createPrototypeCore({ eventTarget: window });
+            window.core = createEditorCore({ eventTarget: window });
             await core.initEditor(editor);
             window.lastSource = source;
             core.events.on('editor-update', ({ result }) => { lastSource = result.source; });

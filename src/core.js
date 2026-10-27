@@ -30,7 +30,7 @@ function dispatch(element, type, detail) {
 }
 
 /** Connect source input, selection/diff helpers, and editor-detail updates. */
-export function createPrototypeCore({ updateText, eventTarget = globalThis.window } = {}) {
+export function createEditorCore({ updateText, eventTarget = globalThis.window } = {}) {
     const events = createEditorEvents();
     const activeEditors = new Map();
 
@@ -220,4 +220,4 @@ export function createPrototypeCore({ updateText, eventTarget = globalThis.windo
 }
 
 export * from "./editors/index.js";
-export default createPrototypeCore;
+export default createEditorCore;

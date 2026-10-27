@@ -2,10 +2,10 @@ const { test, before } = require('node:test');
 const assert = require('node:assert/strict');
 let parseDOM, planDOMEdit, applyEditorDetailsPlan, updateDOMEditorDetails;
 before(async () => {
-    ({ parseDOM } = await import('../src/prototype/editors/parsers/dom.js'));
-    ({ planDOMEdit } = await import('../src/prototype/editors/utilities/planDOMEdit.js'));
-    ({ applyEditorDetailsPlan } = await import('../src/prototype/editors/utilities/updateEditorDetails.js'));
-    ({ updateDOMEditorDetails } = await import('../src/prototype/editors/dom.js'));
+    ({ parseDOM } = await import('../src/editors/parsers/dom.js'));
+    ({ planDOMEdit } = await import('../src/editors/utilities/planDOMEdit.js'));
+    ({ applyEditorDetailsPlan } = await import('../src/editors/utilities/updateEditorDetails.js'));
+    ({ updateDOMEditorDetails } = await import('../src/editors/dom.js'));
 });
 const sourceOf = details => details.map(detail => detail.value).join('');
 const snapshot = details => details.map(detail => ({ kind: detail.kind, value: detail.value, length: detail.length,

@@ -112,7 +112,7 @@ if (typeof document !== "undefined") {
     else queueMicrotask(observeDocument);
 }
 
-const prototype = {
+const editor = {
     init, initElements, initElement, initEditorInput, uninitEditorInput, destroyEditor,
     sendPosition, updateText, updateElement, loadEditor, loadParser, parseDOM,
     parseMarkdown, parseCode, autoLanguageDetection, createTextEditor, createDOMEditor,
@@ -121,4 +121,4 @@ const prototype = {
     getStoredEditorDetails, deleteStoredEditorDetails
 };
 
-export default prototype;
+export default editor;

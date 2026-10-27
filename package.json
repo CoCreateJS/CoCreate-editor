@@ -16,7 +16,7 @@
     "html",
     "markdown"
   ],
-  "browser": "./src/index.js",
+  "browser": "./src/loader.js",
   "files": [
     "src",
     "dist"

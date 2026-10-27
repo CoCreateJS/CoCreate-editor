@@ -1,17 +1,17 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
-let prototype;
+let editorAPI;
 let lengthEditorDetails;
-test("load editor-details prototype", async () => {
-    prototype = await import("../src/prototype/index.js");
-    ({ lengthEditorDetails } = prototype);
+test("load editor APIs", async () => {
+    editorAPI = await import("../src/index.js");
+    ({ lengthEditorDetails } = editorAPI);
 });
 
 test("DOM parser creates an ordered, source-preserving detail array", async () => {
     const source = '<main  class="page">\n\t<p>Hello <b>world</b></p><!-- end --></main>';
     const editor = { editor: { updateText() {} } };
-    const details = await prototype.parseAndStoreEditorDetails(editor, source);
+    const details = await editorAPI.parseAndStoreEditorDetails(editor, source);
 
     assert.equal(lengthEditorDetails.detailsToSource(details), source);
     assert.equal(lengthEditorDetails.getDetailsLength(details), source.length);
@@ -30,7 +30,7 @@ test("DOM parser creates an ordered, source-preserving detail array", async () =
 
 test("DOM parser keeps each contiguous text run in one detail and edits it in place at its end", async () => {
     const source = "<p>alpha  beta\n\tgamma</p>\n<div>next line</div>";
-    const details = await prototype.parseDOM(source);
+    const details = await editorAPI.parseDOM(source);
     const text = details.filter(detail => detail.kind === "text");
 
     assert.deepEqual(text.map(detail => detail.value), ["alpha  beta\n\tgamma", "\n", "next line"]);
@@ -47,7 +47,7 @@ test("DOM parser keeps each contiguous text run in one detail and edits it in pl
 test("detail updateText, setValue, and remove dispatch detail-relative CRDT edits", async () => {
     const operations = [];
     const editor = { editor: { updateText: operation => operations.push(operation) } };
-    const details = await prototype.parseAndStoreEditorDetails(editor, "<p>alpha</p>");
+    const details = await editorAPI.parseAndStoreEditorDetails(editor, "<p>alpha</p>");
     const text = details.find(detail => detail.kind === "text");
     const original = text.value;
 
@@ -66,10 +66,10 @@ test("detail updateText, setValue, and remove dispatch detail-relative CRDT edit
 test("incoming CRDT updates edit values, refresh cached lengths, and keep the source in sync", async () => {
     const editor = { editor: { updateText() {} } };
     const source = "<p>alpha</p>";
-    const details = await prototype.parseAndStoreEditorDetails(editor, source);
+    const details = await editorAPI.parseAndStoreEditorDetails(editor, source);
     const text = details.find(detail => detail.kind === "text");
     const start = text.getStart() + 1;
-    const result = prototype.updateStoredEditorDetails(editor, {
+    const result = editorAPI.updateStoredEditorDetails(editor, {
         start,
         length: 3,
         value: "OMEGA",
@@ -87,8 +87,8 @@ test("incoming CRDT updates edit values, refresh cached lengths, and keep the so
 test("range deletion classifies removed records and preserves exact source balance", async () => {
     const editor = { editor: { updateText() {} } };
     const source = "<p>a b</p>";
-    const details = await prototype.parseAndStoreEditorDetails(editor, source);
-    const result = prototype.updateStoredEditorDetails(editor, {
+    const details = await editorAPI.parseAndStoreEditorDetails(editor, source);
+    const result = editorAPI.updateStoredEditorDetails(editor, {
         start: 3,
         length: 3,
         value: "",
@@ -103,7 +103,7 @@ test("range deletion classifies removed records and preserves exact source balan
 test("element attribute APIs resolve attribute details and dispatch CRDT ranges", async () => {
     const operations = [];
     const editor = { editor: { updateText: operation => operations.push(operation) } };
-    const details = await prototype.parseAndStoreEditorDetails(editor, '<div class="old"></div>');
+    const details = await editorAPI.parseAndStoreEditorDetails(editor, '<div class="old"></div>');
     const element = details.find(detail => detail.kind === "element");
     const nativeAttribute = { name: "class", value: "old" };
     const liveElement = {
@@ -111,7 +111,7 @@ test("element attribute APIs resolve attribute details and dispatch CRDT ranges"
             return name.toLowerCase() === "class" ? nativeAttribute : null;
         }
     };
-    prototype.bindEditorDetailsLiveDOM(element, liveElement);
+    editorAPI.bindEditorDetailsLiveDOM(element, liveElement);
 
     const attribute = element.getAttribute("class");
     assert.equal(attribute.kind, "attribute");
@@ -135,7 +135,7 @@ test("Markdown details preserve delimiters, content, and individual whitespace n
     const tick = String.fromCharCode(96);
     const source = "# Heading **bold**\r\n- item [link](url)\n\n\tcode " + tick + "x * y" + tick + "\n";
     const editor = { editor: { updateText() {} } };
-    const details = await prototype.parseAndStoreMarkdownDetails(editor, source);
+    const details = await editorAPI.parseAndStoreMarkdownDetails(editor, source);
 
     assert.equal(lengthEditorDetails.detailsToSource(details), source);
     assert.equal(lengthEditorDetails.getDetailsLength(details), source.length);
@@ -157,7 +157,7 @@ test("Markdown details preserve delimiters, content, and individual whitespace n
 });
 
 test("Markdown fence details retain the declared code language", async () => {
-    const details = await prototype.parseMarkdown("```js title=example.js\nconst answer = 42;\n```\n");
+    const details = await editorAPI.parseMarkdown("```js title=example.js\nconst answer = 42;\n```\n");
     const open = details.find(detail => detail.syntax === "fence-open");
     const code = details.find(detail => detail.kind === "codeText");
     assert.equal(open.codeLanguage, "js");
@@ -168,7 +168,7 @@ test("Markdown fence details retain the declared code language", async () => {
 test("code bridge selects language tokenizers and preserves every source character", async () => {
     const editor = { editor: { updateText() {} } };
     const javascript = 'const answer = "yes";\n';
-    const jsDetails = await prototype.parseAndStoreCodeDetails(editor, javascript, "js");
+    const jsDetails = await editorAPI.parseAndStoreCodeDetails(editor, javascript, "js");
     assert.equal(lengthEditorDetails.detailsToSource(jsDetails), javascript);
     assert.equal(lengthEditorDetails.getDetailsLength(jsDetails), javascript.length);
     assert.ok(jsDetails.some(detail => detail.token === "keyword" && detail.value === "const"));
@@ -177,13 +177,13 @@ test("code bridge selects language tokenizers and preserves every source charact
     assert.ok(jsDetails.every(detail => detail.editor === editor && detail.getAttribute === undefined));
 
     const html = '<p class="x">Hi</p>';
-    const htmlDetails = await prototype.parseCode(html, "html", editor);
+    const htmlDetails = await editorAPI.parseCode(html, "html", editor);
     assert.equal(lengthEditorDetails.detailsToSource(htmlDetails), html);
     assert.ok(htmlDetails.some(detail => detail.token === "tag" && detail.value === "p"));
     assert.ok(htmlDetails.some(detail => detail.token === "attribute" && detail.value === "class"));
 
     const plain = "one two\n";
-    const plainDetails = await prototype.parseCode(plain, "text", editor);
+    const plainDetails = await editorAPI.parseCode(plain, "text", editor);
     assert.equal(lengthEditorDetails.detailsToSource(plainDetails), plain);
     assert.ok(plainDetails.every(detail => !detail.token));
 });
@@ -195,7 +195,7 @@ test("code bridge accepts every existing language module through the shared deta
     ];
     for (const language of languages) {
         const source = 'const value = "x";\n';
-        const details = await prototype.parseCode(source, language);
+        const details = await editorAPI.parseCode(source, language);
         assert.equal(lengthEditorDetails.detailsToSource(details), source, language);
         assert.equal(lengthEditorDetails.getDetailsLength(details), source.length, language);
         assert.ok(details.every(detail => detail.language === language && detail.length === detail.value.length), language);
@@ -210,26 +210,26 @@ test("code language detection recognizes common syntax and falls back from unkno
         ['const answer = 42;\nconsole.log(answer);', "javascript"]
     ];
     for (const [source, expected] of examples)
-        assert.equal(await prototype.autoLanguageDetection(source), expected);
+        assert.equal(await editorAPI.autoLanguageDetection(source), expected);
 
     for (const [source, language] of [
         [examples[0][0], undefined],
         [examples[3][0], "javascrpt"]
     ]) {
-        const details = await prototype.parseCode(source, language);
+        const details = await editorAPI.parseCode(source, language);
         assert.ok(details.length > 0);
         assert.ok(details.every(detail => detail.language === (language ? "javascript" : "json")));
     }
 
-    const plain = await prototype.parseCode("some ambiguous text");
+    const plain = await editorAPI.parseCode("some ambiguous text");
     assert.ok(plain.every(detail => detail.language === "text" && !detail.token));
-    const explicitText = await prototype.parseCode(examples[3][0], "text");
+    const explicitText = await editorAPI.parseCode(examples[3][0], "text");
     assert.ok(explicitText.every(detail => detail.language === "text" && !detail.token));
-    const editor = await prototype.createCodeEditor(examples[2][0]);
+    const editor = await editorAPI.createCodeEditor(examples[2][0]);
     assert.equal(editor.language, "css");
 });
 
-test("prototype core routes plain text updates without creating editor details", async () => {
+test("editor core routes plain text updates without creating editor details", async () => {
     const operations = [];
     class TextSurface extends EventTarget {
         constructor() {
@@ -243,7 +243,7 @@ test("prototype core routes plain text updates without creating editor details",
         hasAttribute() { return false; }
     }
     const element = new TextSurface();
-    const core = prototype.createPrototypeCore({ updateText: operation => operations.push(operation), eventTarget: null });
+    const core = editorAPI.createEditorCore({ updateText: operation => operations.push(operation), eventTarget: null });
     const details = await core.initEditor(element, { mode: "text" });
     assert.equal(details, undefined);
 
@@ -264,7 +264,7 @@ test("prototype core routes plain text updates without creating editor details",
     core.disconnect();
 });
 
-test("prototype local text edits preserve the native surface without editor details", async () => {
+test("local text edits preserve the native surface without editor details", async () => {
     class TextSurface extends EventTarget {
         constructor() {
             super();
@@ -277,7 +277,7 @@ test("prototype local text edits preserve the native surface without editor deta
         setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; }
     }
     const element = new TextSurface();
-    const core = prototype.createPrototypeCore({ eventTarget: null });
+    const core = editorAPI.createEditorCore({ eventTarget: null });
     const details = await core.initEditor(element, { mode: "text" });
     element.selectionStart = element.selectionEnd = 2;
     element.value = "aXbc";

@@ -5,7 +5,7 @@
   "cpu": "AMD EPYC 7571",
   "logicalCPUs": 2,
   "platform": "linux x64",
-  "scope": "Current prototype parseDOM + fresh detail construction only; no DOM, diff, CRDT, or selection. Source preparation and validation excluded; variants checked before timing, final result checked afterward. Normal browser GC; previous result retained until replacement returns. ASCII fixture. Six warm-up parses per size.",
+  "scope": "Current editor parseDOM + fresh detail construction only; no DOM, diff, CRDT, or selection. Source preparation and validation excluded; variants checked before timing, final result checked afterward. Normal browser GC; previous result retained until replacement returns. ASCII fixture. Six warm-up parses per size.",
   "results": [
     {
       "targetBytes": 10000,

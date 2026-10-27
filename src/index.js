@@ -1,144 +1,178 @@
-import observer from "@cocreate/observer";
-import { loadMode } from "./modes.js";
-import "./index.css";
+export * from "./core.js";
+export { createEditorEvents } from "./events.js";
+export { bindEditorInput } from "./events.js";
+export { getSelection, setSelection } from "./selection.js";
+export { textChange } from "./textChange.js";
 
-const selector = "[realtime][array][object][key]";
-const selectors = [
-    `input${selector}`,
-    `textarea${selector}`,
-    "input[crdt='true'][array][object][key]",
-    "textarea[crdt='true'][array][object][key]",
-    ":is([contenteditable], [editor], [editor-language]):not([contenteditable='false'])"
-].join(", ");
+import { createEditorCore } from "./core.js";
+import * as editorAPI from "./editors/index.js";
+import { createEditorEvents, bindEditorInput } from "./events.js";
+import { getSelection, setSelection } from "./selection.js";
+import { textChange } from "./textChange.js";
+const editorCore = createEditorCore();
+const editorSelector = ":is([editor], [editor-language], [contenteditable], input[realtime][array][object][key], textarea[realtime][array][object][key], input[crdt='true'][array][object][key], textarea[crdt='true'][array][object][key]):not([contenteditable='false']):not([editor-query])";
+const inputBindingSelector = "input[editor-query], textarea[editor-query]";
+let observerReady;
+let inputBindingPromise;
 
-let corePromise;
+function loadInputBinding() {
+    inputBindingPromise ||= import(/* webpackChunkName: "editor-input-binding" */ "./inputBinding.js")
+        .catch(error => { inputBindingPromise = undefined; throw error; });
+    return inputBindingPromise;
+}
 
-function loadCore() {
-    if (!corePromise) {
-        corePromise = import(/* webpackChunkName: "editor-core" */ "./Core.js")
-            .then(module => module.default)
-            .catch(error => {
-                corePromise = undefined;
-                throw error;
-            });
+export async function initEditorInput(input, options) {
+    const module = await loadInputBinding();
+    return module.initEditorInput(input, options);
+}
+
+export async function uninitEditorInput(input) {
+    const module = await loadInputBinding();
+    return module.uninitEditorInput(input);
+}
+
+function emit(element, type, detail) {
+    const EventConstructor = element.ownerDocument?.defaultView?.CustomEvent || globalThis.CustomEvent;
+    if (EventConstructor) element.dispatchEvent(new EventConstructor(type, { bubbles: true, detail }));
+}
+
+export function initElement(element, { force = false } = {}) {
+    if (!element) return Promise.reject(new TypeError("An editor element is required."));
+    element.editor ||= {};
+    element.editor.element = element;
+    attachEditorAPI(element);
+    if (element.editor.loading) return element.editor.loading;
+    if (element.editor.initialized && !force) return Promise.resolve(editorCore.getEditorDetails(element));
+    element.editor.initialized = false;
+    const loading = editorCore.initEditor(element, { force }).then(details => {
+        element.editor.initialized = true;
+        emit(element, "editor-ready", { details, mode: element.getAttribute("editor") || "text" });
+        return details;
+    }).catch(error => {
+        emit(element, "editor-error", { error });
+        throw error;
+    }).finally(() => {
+        if (element.editor.loading === loading) delete element.editor.loading;
+    });
+    element.editor.loading = loading;
+    return loading;
+}
+
+function attachEditorAPI(element) {
+    const api = element.editor;
+    const nodesDescriptor = Object.getOwnPropertyDescriptor(api, "nodes");
+    if (!nodesDescriptor || nodesDescriptor.configurable) {
+        Object.defineProperty(api, "nodes", {
+            configurable: true,
+            enumerable: true,
+            get: () => editorCore.getEditorDetails(element) || []
+        });
     }
-    return corePromise;
+    if (typeof api.init !== "function") api.init = options => {
+        const settings = options || {};
+        const input = settings.input || element;
+        const target = settings.target || (!settings.query && element.getAttributeNode
+            ? element : undefined);
+        return initEditorInput(input, {
+            context: settings.context || element,
+            target,
+            query: settings.query,
+            attribute: settings.attribute,
+            part: settings.part
+        });
+    };
+    if (typeof api.uninit !== "function") api.uninit = input =>
+        uninitEditorInput(input || element);
+    return api;
 }
 
-function reportError(element, error) {
-    const EventConstructor = element.ownerDocument.defaultView.CustomEvent;
-    element.dispatchEvent(new EventConstructor("editor-error", {
-        bubbles: true, detail: { error }
-    }));
+export function initElements(elements) {
+    return Promise.all([...elements].map(element => initElement(element)));
 }
 
-function loadForMutation({ target, attributeName }) {
-    const wasLoaded = !!corePromise;
-    return loadCore().then(core => {
-        // Code owns language changes once its renderer is active. If a language
-        // attribute turns a text surface into a code editor, initialize it here.
-        if (!wasLoaded) return core.initElement(target);
-        if (attributeName === "editor-language" &&
-            !target.editor?.loading &&
-            (target.getAttribute("editor")?.trim().toLowerCase() !== "code" ||
-                target.editor?.modeName !== "code"))
-            return core.initElement(target);
-    }).catch(error => reportError(target, error));
+async function installObserver() {
+    if (observerReady) return observerReady;
+    observerReady = import("@cocreate/observer").then(({ default: observer }) => {
+        observer.init([
+            {
+                name: "CoCreateEditorAddedNodes",
+                types: ["addedNodes"],
+                selector: editorSelector,
+                callback: mutation => initElement(mutation.target)
+            },
+            {
+                name: "CoCreateEditorAttributes",
+                types: ["attributes"],
+                attributeFilter: ["editor", "editor-language", "contenteditable"],
+                selector: editorSelector,
+                callback: mutation => initElement(mutation.target, { force: true })
+            },
+            {
+                name: "CoCreateEditorInputBindings",
+                types: ["addedNodes", "attributes"],
+                attributeFilter: ["editor-query", "editor-attribute", "editor-attribute-part"],
+                selector: inputBindingSelector,
+                callback: mutation => {
+                    const input = mutation.target;
+                    loadInputBinding().then(({ initEditorInput }) => initEditorInput(input, {
+                        context: input.ownerDocument,
+                        query: input.getAttribute("editor-query"),
+                        attribute: input.hasAttribute("editor-attribute") ? {
+                            name: input.getAttribute("editor-attribute"),
+                            part: input.getAttribute("editor-attribute-part") || "value"
+                        } : undefined
+                    })).catch(error => emit(input, "editor-error", { error }));
+                }
+            }
+        ]);
+    }).catch(error => {
+        observerReady = undefined;
+        throw error;
+    });
+    return observerReady;
 }
 
-observer.init([
-    {
-        name: "CoCreateEditorLoaderAddedNodes",
-        types: ["addedNodes"],
-        selector: selectors,
-        callback: loadForMutation
-    },
-    {
-        name: "CoCreateEditorLoaderAttributes",
-        types: ["attributes"],
-        attributeFilter: ["array", "object", "key", "realtime", "crdt", "editor", "editor-language", "contenteditable"],
-        selector: selectors,
-        callback: loadForMutation
-    }
-]);
-
-function start() {
-    if (document.querySelector(selectors)) loadCore().catch(() => {});
+export async function init(root = globalThis.document) {
+    if (!root?.querySelectorAll) return [];
+    await installObserver();
+    const elements = [...root.querySelectorAll(editorSelector)];
+    const editors = await initElements(elements);
+    const inputs = [...root.querySelectorAll(inputBindingSelector)];
+    await Promise.all(inputs.map(input => initEditorInput(input, {
+        context: root,
+        query: input.getAttribute("editor-query"),
+        attribute: input.hasAttribute("editor-attribute") ? {
+            name: input.getAttribute("editor-attribute"),
+            part: input.getAttribute("editor-attribute-part") || "value"
+        } : undefined
+    })));
+    return editors;
 }
 
-/** Render source to detached DOM without initializing an editable surface. */
-export async function render(source, options = {}) {
-    const settings = typeof options === "string" ? { mode: options } : options || {};
-    const name = String(settings.mode || "text").trim().toLowerCase();
-    const language = String(settings.language || "text").trim().toLowerCase();
-    const value = String(source ?? "");
-
-    if (!["text", "dom", "markdown", "code"].includes(name))
-        throw new TypeError(`Unsupported render mode: ${name}`);
-
-    if (name === "text") {
-        const output = document.createElement("div");
-        output.textContent = value;
-        return output;
-    }
-
-    const host = document.createElement("div");
-    if (name === "code" && language !== "text")
-        host.setAttribute("editor-language", language);
-    const renderer = await loadMode({ name, language }, { editing: false });
-    return renderer.render(value, host);
-}
-
-/** Parse Markdown source into its detached rendered DOM element. */
-export function parseMarkdown(source) {
-    return render(source, { mode: "markdown" });
-}
-
-/** Parse code source into detached syntax-highlighted DOM for a language. */
-export function parseCode(source, language = "text") {
-    return render(source, { mode: "code", language });
-}
-
-export async function init() {
-    const core = await loadCore();
-    return core.init();
-}
-
-export async function initElements(elements) {
-    const core = await loadCore();
-    return core.initElements(elements);
-}
-
-export async function initElement(element) {
-    const core = await loadCore();
-    return core.initElement(element);
-}
-
-export async function sendPosition(element) {
-    const core = await loadCore();
-    return core.sendPosition(element);
-}
-
-export async function updateText(data) {
-    const core = await loadCore();
-    return core.updateText(data);
-}
-
-export async function updateElement(data) {
-    const core = await loadCore();
-    return core.updateElement(data);
-}
-
-start();
-
-export default {
+const editor = {
+    createCore: createEditorCore,
+    createEditorCore,
     init,
     initElements,
     initElement,
-    sendPosition,
-    render,
-    parseMarkdown,
-    parseCode,
-    updateText,
-    updateElement
+    destroyEditor: element => editorCore.destroyEditor(element),
+    ...editorAPI,
+    createEditorEvents,
+    bindEditorInput,
+    initEditorInput,
+    uninitEditorInput,
+    getSelection,
+    setSelection,
+    textChange
 };
+
+export default editor;
+
+if (typeof document !== "undefined") {
+    const start = () => init().catch(error => {
+        console.error("CoCreate editor initialization failed", error);
+    });
+    if (document.readyState === "loading")
+        document.addEventListener("DOMContentLoaded", start, { once: true });
+    else queueMicrotask(start);
+}

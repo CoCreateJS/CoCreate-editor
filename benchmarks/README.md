@@ -3,17 +3,17 @@
 Run the generated fixture benchmark from the repository root:
 
 ```sh
-CHROMIUM_PATH=/path/to/chrome node benchmarks/dom-full-parse.cjs > benchmarks/dom-full-parse.results.json
+CHROMIUM_PATH=/path/to/chrome node benchmarks/editor-dom-parse.cjs > benchmarks/editor-dom-parse.results.json
 ```
 
 Pass a real HTML file to benchmark that source with content and attribute
 edits:
 
 ```sh
-CHROMIUM_PATH=/path/to/chrome node benchmarks/dom-full-parse.cjs test/builder.html > benchmarks/builder-parse.results.json
+CHROMIUM_PATH=/path/to/chrome node benchmarks/editor-dom-parse.cjs test/builder.html > benchmarks/editor-dom-builder.results.json
 ```
 
-This measures the existing prototype `parseDOM` and its real editor-detail
+This measures the editor `parseDOM` and its real editor-detail
 constructor, with fresh objects after every source edit. It does not change the
 editor, parser, or build entry point.
 
@@ -48,7 +48,7 @@ parser's interpretation of incomplete markup is the desired one.
 ## Recorded run
 
 Chromium 153, Linux x64, AMD EPYC 7571 (2 logical CPUs available).
-Full samples and environment metadata are in `dom-full-parse.results.json`.
+Full samples and environment metadata are in `editor-dom-parse.results.json`.
 Sizes below use decimal KB/MB and all timings are per full parse.
 
 | Source size | Details | Median | p95 | Maximum |
@@ -75,5 +75,5 @@ JavaScript characters. It parses into 28,486 details, including 2,763 elements.
 In Chromium 153 on the same machine, 60 full parses after text and quoted
 attribute edits measured 74.0 ms median, 153.6 ms p95, and 1,545.9 ms maximum.
 The first parse measured 141.7 ms. The detailed samples are in
-`builder-parse.results.json`. The parser reconstructed the original source
+`editor-dom-builder.results.json`. The parser reconstructed the original source
 exactly, and the benchmark checked the edited source variants before timing.

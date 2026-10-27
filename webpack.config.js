@@ -18,7 +18,7 @@ export default async (env, argv) => {
 				: {}
 		},
 		entry: {
-			"CoCreate-editor": "./src/prototype/loader.js"
+			"CoCreate-editor": "./src/loader.js"
 		},
 		output: {
 			path: path.resolve(__dirname, "dist"),
@@ -61,20 +61,7 @@ export default async (env, argv) => {
 				target: "es2017",
 				minify: true
 			})
-			],
-			splitChunks: {
-				cacheGroups: {
-					defaultVendors: false,
-					editorSyntax: {
-						test: /[\\/]editors[\\/]utilities[\\/]config\.js$/,
-						name: "editor-syntax",
-						chunks: "all",
-						minSize: 0,
-						minChunks: 2,
-						reuseExistingChunk: true
-					}
-				}
-			}
+			]
 		},
 		performance: {
 			hints: isProduction ? "warning" : false
