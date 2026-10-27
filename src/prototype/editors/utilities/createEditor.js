@@ -6,6 +6,8 @@
  * parsers do not need to know how editor objects are assembled.
  */
 
+import { initEditorInput, uninitEditorInput } from "../../inputBinding.js";
+
 export const editorPrototype = Object.create(null);
 export const elementEditorPrototype = Object.create(editorPrototype);
 const collectionsByEditor = new WeakMap();
@@ -43,6 +45,20 @@ function attributeEditor(elementEditor, name, nativeAttribute) {
 }
 
 Object.assign(editorPrototype, {
+    init({ input, query, context, attribute, part, target } = {}) {
+        if (!input) throw new TypeError("An input element is required to bind an editor detail.");
+        const isAttribute = this.kind === "attribute";
+        return initEditorInput(input, {
+            context: context || this.element,
+            target: target || (!query && (isAttribute ? this.parentNode?.liveNode : this.liveNode)),
+            query,
+            attribute: attribute || (isAttribute ? { name: this.name } : undefined),
+            part
+        });
+    },
+    uninit(input) {
+        return uninitEditorInput(input);
+    },
     getStart() {
         const collection = collectionsByEditor.get(this);
         if (!collection) throw new Error("Editor is not attached to an ordered editor collection.");
@@ -68,6 +84,66 @@ Object.assign(editorPrototype, {
 });
 
 Object.assign(elementEditorPrototype, {
+    /** Find a detail-local insertion point at one of this element's boundaries. */
+    getInsertionPoint(position) {
+        const collection = collectionsByEditor.get(this);
+        if (!collection) throw new Error("Editor is not attached to an ordered editor collection.");
+        if (position === "beforebegin") return { editor: this, offset: 0 };
+        if (position !== "afterbegin" && position !== "beforeend" && position !== "afterend")
+            return null;
+
+        let openingDelimiter = null, closingTag = null;
+        for (const detail of collection) {
+            if (detail.parentNode !== this) continue;
+            if (!openingDelimiter && detail.kind === "markup" && detail.value.includes(">"))
+                openingDelimiter = detail;
+            if (detail.kind === "elementEnd" && detail.tag === this.tag) {
+                closingTag = detail;
+                break;
+            }
+        }
+        if (this.void || this.selfClosing)
+            return position === "afterend" && openingDelimiter
+                ? { editor: openingDelimiter, offset: openingDelimiter.length } : null;
+        if (position === "afterbegin")
+            return openingDelimiter ? { editor: openingDelimiter, offset: openingDelimiter.length } : null;
+        if (!closingTag) return null;
+        return { editor: closingTag, offset: position === "beforeend" ? 0 : closingTag.length };
+    },
+    /** Derive this element's inner source range from the flat detail ledger. */
+    getContentRange() {
+        const collection = collectionsByEditor.get(this);
+        if (!collection) throw new Error("Editor is not attached to an ordered editor collection.");
+        let position = 0, found = false, contentStart = null;
+        for (const detail of collection) {
+            const start = position;
+            position += detail.length;
+            if (detail === this) { found = true; continue; }
+            if (!found) continue;
+            if (contentStart === null && detail.parentNode === this && detail.kind === "markup" && detail.value.includes(">")) {
+                contentStart = position;
+                continue;
+            }
+            if (contentStart !== null && detail.kind === "elementEnd" && detail.parentNode === this)
+                return { start: contentStart, end: start };
+        }
+        return contentStart === null ? null : { start: contentStart, end: contentStart };
+    },
+    /** Derive the complete outer source span, including its closing tag. */
+    getOuterRange() {
+        const collection = collectionsByEditor.get(this);
+        if (!collection) throw new Error("Editor is not attached to an ordered editor collection.");
+        const start = this.getStart();
+        const content = this.getContentRange();
+        if (!content) return null;
+        let position = 0;
+        for (const detail of collection) {
+            position += detail.length;
+            if (detail.kind === "elementEnd" && detail.parentNode === this)
+                return { start, end: position };
+        }
+        return { start, end: content.end };
+    },
     /** Return the matching attribute editor, or null when the attribute is absent. */
     getAttribute(name) {
         return attributeEditor(this, name);

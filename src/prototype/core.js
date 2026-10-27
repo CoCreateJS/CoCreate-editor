@@ -64,6 +64,23 @@ export function createPrototypeCore({ updateText, eventTarget = globalThis.windo
             element.editor.element = element;
             if (element.ownerDocument && module.getSource)
                 element.editor.getSource = () => module.getSource(element);
+            if (typeof element.editor.updateText !== "function") {
+                state.localUpdateText = update => {
+                    const start = update?.start;
+                    const length = update?.length ?? (update?.end - start);
+                    if (!Number.isInteger(start) || !Number.isInteger(length) ||
+                        start < 0 || length < 0 || typeof update?.value !== "string")
+                        throw new TypeError("Local editor updates require start, length, and a string value.");
+                    const previous = state.source;
+                    const source = previous.slice(0, start) + update.value + previous.slice(start + length);
+                    const result = receiveUpdate({ ...update, elements: [element], start, length,
+                        string: source, local: true });
+                    events.emit("text-update", { element, ...update, string: source });
+                    dispatch(element, "editor-source-change", { before: previous, value: source });
+                    return result;
+                };
+                element.editor.updateText = state.localUpdateText;
+            }
             state.input = bindEditorInput(element, {
                 readValue: options.readValue || ((event, selection) => element.ownerDocument
                     ? (module.readInputSource?.(element, event, selection) ?? module.getSource?.(element, event, selection)) ?? readSource(element, mode)
@@ -172,6 +189,8 @@ export function createPrototypeCore({ updateText, eventTarget = globalThis.windo
         if (!state) return false;
         state.input?.disconnect();
         state.module?.destroyEditor?.(element);
+        if (state.localUpdateText && element.editor?.updateText === state.localUpdateText)
+            delete element.editor.updateText;
         activeEditors.delete(element);
         deleteStoredEditorDetails(element);
         events.emit("editor-destroy", { element });

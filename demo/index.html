@@ -38,6 +38,10 @@
             .workspace:not(.single) #preview-content { max-height: none; }
             #preview-content pre { min-height: 0; max-height: none; padding: 0; }
             .details-console { margin-top: 1rem; }
+            #dom-inspector { margin-top: 1rem; padding: .8rem .9rem; }
+            #dom-inspector label { align-items: flex-start; flex-direction: column; gap: .25rem; }
+            #dom-inspector input { box-sizing: border-box; width: min(100%, 28rem); padding: .45rem .55rem; font: 14px ui-monospace, SFMono-Regular, Consolas, monospace; }
+            #dom-inspector small { color: #596273; }
             .details-console pre { min-height: 8rem; max-height: 20rem; background: #171923; color: #e2e5ef; }
             #status { min-height: 1.5rem; margin-left: auto; color: #596273; }
             .error { color: #a4262c !important; }
@@ -99,6 +103,12 @@
                 <div id="preview-content"></div>
             </section>
         </div>
+        <section id="dom-inspector" class="panel" hidden>
+            <label for="dom-class-input">Selected element class</label>
+            <input id="dom-class-input" type="text" autocomplete="off" aria-describedby="dom-class-help"
+                editor-query="$clickedElement" editor-attribute="class" disabled />
+            <small id="dom-class-help">Click an element in the DOM editor, then edit its class here.</small>
+        </section>
         <section class="panel details-console">
             <h2 id="details-title">Editor details</h2>
             <pre id="details-view">Waiting for initialization…</pre>
@@ -147,6 +157,8 @@
             const textSurfaces = document.querySelector('#text-surfaces');
             const sourceTitle = document.querySelector('#source-title');
             const detailsTitle = document.querySelector('#details-title');
+            const domInspector = document.querySelector('#dom-inspector');
+            const domClassInput = document.querySelector('#dom-class-input');
             let activeEditor = null;
             let activeMode = 'editor';
             let activeType = 'text';
@@ -270,7 +282,7 @@
             }
 
             function waitForReady(element) {
-                if (element.editor?.init) return Promise.resolve();
+                if (element.editor?.initialized) return Promise.resolve();
                 return new Promise((resolve, reject) => {
                     element.addEventListener('editor-ready', resolve, { once: true });
                     element.addEventListener('editor-error', event => reject(event.detail.error), { once: true });
@@ -293,9 +305,13 @@
                 sourceTitle.textContent = 'Editor source';
                 detailsTitle.textContent = 'Editor details';
                 detailsConsole.hidden = false;
+                domInspector.hidden = type !== 'dom';
                 previewPanel.hidden = true;
                 workspace.classList.add('single');
-                if (activeEditor) CoCreate.editor.destroyEditor(activeEditor);
+                if (activeEditor) {
+                    activeEditor.editor?.uninit?.(domClassInput);
+                    CoCreate.editor.destroyEditor(activeEditor);
+                }
                 const editor = document.createElement(type === 'text' && surface === 'input' ? 'input'
                     : type === 'text' && surface === 'textarea' ? 'textarea' : 'div');
                 editor.className = 'source-input';
@@ -320,6 +336,24 @@
                     formatDetails(initialDetails);
                     editor.addEventListener('editor-details-change', event =>
                         formatDetails(event.detail.result.editorDetails));
+                    if (type === 'dom') editor.addEventListener('click', event => {
+                        const target = event.target.nodeType === 1 ? event.target : event.target.parentElement;
+                        if (!target || target === editor || !editor.contains(target)) return;
+                        editor.editor.init({
+                            input: domClassInput,
+                            target,
+                            context: editor,
+                            attribute: { name: 'class', part: 'value' }
+                        }).then(() => {
+                            domClassInput.disabled = !target.hasAttribute('class');
+                            status.textContent = target.hasAttribute('class')
+                                ? `Editing class on <${target.tagName.toLowerCase()}>`
+                                : `<${target.tagName.toLowerCase()}> has no class attribute`;
+                        }).catch(error => {
+                            status.textContent = `Attribute binding failed: ${error.message}`;
+                            status.classList.add('error');
+                        });
+                    });
                     status.textContent = `${type}${type === 'code' ? ` / ${activeLanguage}` : ''} editor ready`;
                 } catch (error) {
                     status.textContent = `Initialization failed: ${error.message}`;

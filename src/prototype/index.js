@@ -11,9 +11,12 @@ import * as editorAPI from "./editors/index.js";
 import { createEditorEvents, bindEditorInput } from "./events.js";
 import { getSelection, setSelection } from "./selection.js";
 import { textChange } from "./textChange.js";
+import { initEditorInput, uninitEditorInput } from "./inputBinding.js";
+
+export { initEditorInput, uninitEditorInput };
 
 const prototypeCore = createPrototypeCore();
-const editorSelector = ":is(input, textarea, [contenteditable], [editor], [editor-language]):not([contenteditable='false'])";
+const editorSelector = ":is(input, textarea, [contenteditable], [editor], [editor-language]):not([contenteditable='false']):not([editor-query][editor-attribute])";
 let observerReady;
 
 function emit(element, type, detail) {
@@ -25,11 +28,12 @@ export function initElement(element, { force = false } = {}) {
     if (!element) return Promise.reject(new TypeError("An editor element is required."));
     element.editor ||= {};
     element.editor.element = element;
+    attachEditorAPI(element);
     if (element.editor.loading) return element.editor.loading;
-    if (element.editor.init && !force) return Promise.resolve(prototypeCore.getEditorDetails(element));
-    element.editor.init = false;
+    if (element.editor.initialized && !force) return Promise.resolve(prototypeCore.getEditorDetails(element));
+    element.editor.initialized = false;
     const loading = prototypeCore.initEditor(element, { force }).then(details => {
-        element.editor.init = true;
+        element.editor.initialized = true;
         emit(element, "editor-ready", { details, mode: element.getAttribute("editor") || "text" });
         return details;
     }).catch(error => {
@@ -40,6 +44,34 @@ export function initElement(element, { force = false } = {}) {
     });
     element.editor.loading = loading;
     return loading;
+}
+
+function attachEditorAPI(element) {
+    const api = element.editor;
+    const nodesDescriptor = Object.getOwnPropertyDescriptor(api, "nodes");
+    if (!nodesDescriptor || nodesDescriptor.configurable) {
+        Object.defineProperty(api, "nodes", {
+            configurable: true,
+            enumerable: true,
+            get: () => prototypeCore.getEditorDetails(element) || []
+        });
+    }
+    if (typeof api.init !== "function") api.init = options => {
+        const settings = options || {};
+        const input = settings.input || element;
+        const target = settings.target || (!settings.query && element.getAttributeNode
+            ? element : undefined);
+        return initEditorInput(input, {
+            context: settings.context || element,
+            target,
+            query: settings.query,
+            attribute: settings.attribute,
+            part: settings.part
+        });
+    };
+    if (typeof api.uninit !== "function") api.uninit = input =>
+        uninitEditorInput(input || element);
+    return api;
 }
 
 export function initElements(elements) {
@@ -62,6 +94,23 @@ async function installObserver() {
                 attributeFilter: ["editor", "editor-language", "contenteditable"],
                 selector: editorSelector,
                 callback: mutation => initElement(mutation.target, { force: true })
+            },
+            {
+                name: "CoCreatePrototypeEditorInputBindings",
+                types: ["addedNodes", "attributes"],
+                attributeFilter: ["editor-query", "editor-attribute", "editor-attribute-part"],
+                selector: "input[editor-query][editor-attribute], textarea[editor-query][editor-attribute]",
+                callback: mutation => {
+                    const input = mutation.target;
+                    initEditorInput(input, {
+                        context: input.ownerDocument,
+                        query: input.getAttribute("editor-query"),
+                        attribute: {
+                            name: input.getAttribute("editor-attribute"),
+                            part: input.getAttribute("editor-attribute-part") || "value"
+                        }
+                    }).catch(error => emit(input, "editor-error", { error }));
+                }
             }
         ]);
     }).catch(error => {
@@ -75,7 +124,17 @@ export async function init(root = globalThis.document) {
     if (!root?.querySelectorAll) return [];
     await installObserver();
     const elements = [...root.querySelectorAll(editorSelector)];
-    return initElements(elements);
+    const editors = await initElements(elements);
+    const inputs = [...root.querySelectorAll("input[editor-query][editor-attribute], textarea[editor-query][editor-attribute]")];
+    await Promise.all(inputs.map(input => initEditorInput(input, {
+        context: root,
+        query: input.getAttribute("editor-query"),
+        attribute: {
+            name: input.getAttribute("editor-attribute"),
+            part: input.getAttribute("editor-attribute-part") || "value"
+        }
+    })));
+    return editors;
 }
 
 const prototype = {
@@ -88,6 +147,8 @@ const prototype = {
     ...editorAPI,
     createEditorEvents,
     bindEditorInput,
+    initEditorInput,
+    uninitEditorInput,
     getSelection,
     setSelection,
     textChange

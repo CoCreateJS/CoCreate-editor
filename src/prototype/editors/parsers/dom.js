@@ -208,7 +208,8 @@ export function parseDOM(source) {
         const element = record("element", source.slice(index, nameEnd), parent(), {
             tag,
             complete: true,
-            selfClosing: false
+            selfClosing: false,
+            void: voidElements.has(tag)
         });
 
         let cursor = nameEnd;

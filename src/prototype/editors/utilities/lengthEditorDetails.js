@@ -55,7 +55,7 @@ function textRecord(value, template) {
 export function planDetailsEdit(details, start, end, value = "") {
     assertRecords(details);
     if (typeof value !== "string") throw new TypeError("Inserted value must be a string.");
-    const totalLength = getEditorDetailsLength(details);
+    const totalLength = getEditorsLength(details);
     if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || end > totalLength)
         throw new RangeError("Expected a valid half-open source range.");
 
