@@ -4,6 +4,7 @@
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>CoCreate Editor</title>
+        <link rel="stylesheet" href="../dist/CoCreate-editor.min.css" />
         <style>
             :root { color-scheme: light; font: 16px/1.5 system-ui, sans-serif; color: #20242b; background: #f5f7fa; }
             body { max-width: 68rem; margin: 2.5rem auto; padding: 0 1.25rem; }
@@ -18,7 +19,8 @@
             .control-group button { border: 0; border-radius: .25rem; background: transparent; padding: .4rem .75rem; font: inherit; cursor: pointer; }
             .control-group button[aria-pressed="true"] { background: #6750d8; color: white; }
             .language-options { flex-wrap: wrap; }
-            .subcontrols { display: flex; align-items: center; gap: 1rem; min-height: 2.5rem; margin: -.5rem 0 1rem; }
+            .subcontrols { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; min-height: 2.5rem; margin: -.5rem 0 1rem; }
+            .language-help { flex-basis: 100%; margin: 0; color: #596273; }
             label { display: flex; align-items: center; gap: .5rem; }
             select, textarea, button { font: inherit; }
             select, .action { padding: .4rem .6rem; }
@@ -37,6 +39,9 @@
             #preview-content { box-sizing: border-box; max-height: 34rem; overflow: auto; padding: .85rem; }
             .workspace:not(.single) #preview-content { max-height: none; }
             #preview-content pre { min-height: 0; max-height: none; padding: 0; }
+            #preview-content table { width: 100%; border-collapse: collapse; }
+            #preview-content th, #preview-content td { border: 1px solid #d7dce4; padding: .35rem .55rem; text-align: left; }
+            #preview-content th { background: #f5f7fa; }
             .details-console { margin-top: 1rem; }
             #dom-inspector { margin-top: 1rem; padding: .8rem .9rem; }
             #dom-inspector label { align-items: flex-start; flex-direction: column; gap: .25rem; }
@@ -50,24 +55,24 @@
     </head>
     <body>
         <h1>CoCreate Editor</h1>
-        <p class="intro">Editor mode initializes an editable source surface. Parser mode runs Markdown or code parsing on demand without creating an editor.</p>
+        <p id="loading-description" class="intro">Editor is selected. Choose Text, DOM, Markdown, or Code to load that editor on demand.</p>
 
         <div class="toolbar">
             <div id="mode-control" class="control-group" role="group" aria-label="Mode">
                 <button type="button" aria-pressed="true" data-mode="editor">Editor</button>
                 <button type="button" aria-pressed="false" data-mode="parser">Parser</button>
             </div>
-            <span id="status" role="status">Starting prototype…</span>
+            <span id="status" role="status">Choose Editor or Parser.</span>
         </div>
 
-        <div id="editor-tabs" class="tabs" role="tablist" aria-label="Editor type">
-            <button type="button" role="tab" aria-selected="true" data-type="text">Text</button>
+        <div id="editor-tabs" class="tabs" role="tablist" aria-label="Editor type" hidden>
+            <button type="button" role="tab" aria-selected="false" data-type="text">Text</button>
             <button type="button" role="tab" aria-selected="false" data-type="dom">DOM</button>
             <button type="button" role="tab" aria-selected="false" data-type="markdown">Markdown</button>
             <button type="button" role="tab" aria-selected="false" data-type="code">Code</button>
         </div>
         <div id="parser-tabs" class="tabs" role="tablist" aria-label="Parser type" hidden>
-            <button type="button" role="tab" aria-selected="true" data-type="markdown">Markdown</button>
+            <button type="button" role="tab" aria-selected="false" data-type="markdown">Markdown</button>
             <button type="button" role="tab" aria-selected="false" data-type="code">Code</button>
         </div>
         <div id="editor-options" class="subcontrols" hidden>
@@ -91,9 +96,10 @@
                 <button type="button" aria-pressed="false" data-language="java">Java</button>
                 <button type="button" aria-pressed="false" data-language="php">PHP</button>
             </div>
+            <small id="language-help" class="language-help" hidden>Language modules load on demand when selected.</small>
         </div>
 
-        <div class="workspace">
+        <div id="workspace" class="workspace" hidden>
             <section class="panel">
                 <h2 id="source-title">Editor source</h2>
                 <div id="editor-host"></div>
@@ -106,15 +112,15 @@
         <section id="dom-inspector" class="panel" hidden>
             <label for="dom-class-input">Selected element class</label>
             <input id="dom-class-input" type="text" autocomplete="off" aria-describedby="dom-class-help"
-                editor-query="$clickedElement" editor-attribute="class" disabled />
+                editor-attribute="class" disabled />
             <small id="dom-class-help">Click an element in the DOM editor, then edit its class here.</small>
         </section>
-        <section class="panel details-console">
+        <section class="panel details-console" hidden>
             <h2 id="details-title">Editor details</h2>
             <pre id="details-view">Waiting for initialization…</pre>
         </section>
 
-        <script src="../dist/CoCreate-editor.js"></script>
+        <script src="../dist/CoCreate-editor.min.js"></script>
         <script>
             const samples = {
                 text: "Edit plain text here.",
@@ -149,6 +155,7 @@
             const workspace = document.querySelector('.workspace');
             const status = document.querySelector('#status');
             const languageControl = document.querySelector('#language-control');
+            const languageHelp = document.querySelector('#language-help');
             let activeLanguage = 'javascript';
             const modeControl = document.querySelector('#mode-control');
             const editorTabs = document.querySelector('#editor-tabs');
@@ -157,14 +164,28 @@
             const textSurfaces = document.querySelector('#text-surfaces');
             const sourceTitle = document.querySelector('#source-title');
             const detailsTitle = document.querySelector('#details-title');
+            const loadingDescription = document.querySelector('#loading-description');
+            const workspaceElement = document.querySelector('#workspace');
             const domInspector = document.querySelector('#dom-inspector');
             const domClassInput = document.querySelector('#dom-class-input');
             let activeEditor = null;
             let activeMode = 'editor';
-            let activeType = 'text';
+            let activeType = null;
             let activeSurface = 'contenteditable';
             let parseVersion = 0;
             let parseTimer;
+            let markdownSamplePromise;
+            let viewGeneration = 0;
+
+            function loadMarkdownSample() {
+                markdownSamplePromise ||= fetch('../README.md')
+                    .then(response => {
+                        if (!response.ok) throw new Error(`README request failed: ${response.status}`);
+                        return response.text();
+                    })
+                    .catch(() => samples.markdown);
+                return markdownSamplePromise;
+            }
 
             function formatDetails(details) {
                 detailsView.textContent = details.map((detail, index) => {
@@ -205,11 +226,56 @@
             function renderMarkdown(details) {
                 const root = document.createElement('div');
                 const lines = new Map();
+                let fencedCode = null;
+                const consumedTableLines = new Set();
                 for (const detail of details) {
                     if (!lines.has(detail.line)) lines.set(detail.line, []);
                     lines.get(detail.line).push(detail);
                 }
-                for (const records of lines.values()) {
+                for (const [lineNumber, records] of lines) {
+                    if (consumedTableLines.has(lineNumber)) continue;
+                    const fenceOpen = records.find(detail => detail.syntax === 'fence-open');
+                    const fenceClose = records.some(detail => detail.syntax === 'fence-close');
+                    if (fenceOpen) {
+                        const pre = document.createElement('pre');
+                        const code = document.createElement('code');
+                        const language = fenceOpen.resolvedCodeLanguage || fenceOpen.codeLanguage;
+                        if (language) {
+                            code.dataset.language = language;
+                            code.classList.add(`language-${language}`);
+                        }
+                        pre.append(code);
+                        root.append(pre);
+                        fencedCode = code;
+                        continue;
+                    }
+                    if (fencedCode) {
+                        if (!fenceClose) for (const detail of records) {
+                            if (detail.token) {
+                                const token = document.createElement('span');
+                                token.className = `token-${detail.token}`;
+                                token.textContent = detail.value;
+                                fencedCode.append(token);
+                            } else fencedCode.append(document.createTextNode(detail.value));
+                        }
+                        if (fenceClose) fencedCode = null;
+                        continue;
+                    }
+                    if (records.some(detail => detail.blockKind === 'tableHeader')) {
+                        const delimiter = lines.get(lineNumber + 1);
+                        if (delimiter?.some(detail => detail.blockKind === 'tableDelimiter')) {
+                            const bodyRows = [];
+                            consumedTableLines.add(lineNumber + 1);
+                            let nextLine = lineNumber + 2;
+                            while (lines.get(nextLine)?.some(detail => detail.blockKind === 'tableRow')) {
+                                bodyRows.push(lines.get(nextLine));
+                                consumedTableLines.add(nextLine++);
+                            }
+                            renderTable(root, records, bodyRows);
+                            continue;
+                        }
+                    }
+                    if (records.some(detail => detail.blockKind === 'tableDelimiter')) continue;
                     const heading = records.find(detail => detail.kind === 'element' && /^h[1-6]$/.test(detail.tag || ''));
                     const kind = records.find(detail => detail.blockKind)?.blockKind || 'paragraph';
                     const visible = records.some(detail => detail.kind === 'text' || detail.kind === 'codeText');
@@ -238,6 +304,75 @@
                 }
                 pre.append(code);
                 previewContent.replaceChildren(pre);
+            }
+
+            function tableCellRanges(source) {
+                let start = source.search(/\S/);
+                if (start < 0) return [];
+                let end = source.length;
+                while (end > start && /\s/.test(source[end - 1])) end--;
+                if (source[start] === '|') start++;
+                if (source[end - 1] === '|') end--;
+                const ranges = [];
+                let cellStart = start;
+                for (let index = start; index <= end; index++) {
+                    if (index !== end && source[index] !== '|') continue;
+                    let left = cellStart;
+                    let right = index;
+                    while (left < right && /\s/.test(source[left])) left++;
+                    while (right > left && /\s/.test(source[right - 1])) right--;
+                    ranges.push({ start: left, end: right });
+                    cellStart = index + 1;
+                }
+                return ranges;
+            }
+
+            function appendTableCell(cell, records, range) {
+                const content = [];
+                let position = 0;
+                for (const detail of records) {
+                    const end = position + detail.length;
+                    const start = Math.max(position, range.start);
+                    const stop = Math.min(end, range.end);
+                    if (start < stop) content.push({ ...detail,
+                        value: detail.value.slice(start - position, stop - position),
+                        length: stop - start
+                    });
+                    position = end;
+                }
+                appendMarkdownInline(cell, content, false);
+            }
+
+            function renderTable(root, headerRecords, bodyRows) {
+                const table = document.createElement('table');
+                const thead = document.createElement('thead');
+                const header = document.createElement('tr');
+                const headerSource = headerRecords.map(detail => detail.value).join('');
+                const headerRanges = tableCellRanges(headerSource);
+                const alignments = headerRecords.find(detail => detail.tableAlignments)?.tableAlignments || [];
+                headerRanges.forEach((range, index) => {
+                    const cell = document.createElement('th');
+                    appendTableCell(cell, headerRecords, range);
+                    if (alignments[index]) cell.style.textAlign = alignments[index];
+                    header.append(cell);
+                });
+                thead.append(header);
+                table.append(thead);
+
+                const tbody = document.createElement('tbody');
+                for (const records of bodyRows) {
+                    const row = document.createElement('tr');
+                    const source = records.map(detail => detail.value).join('');
+                    tableCellRanges(source).forEach((range, index) => {
+                        const cell = document.createElement('td');
+                        appendTableCell(cell, records, range);
+                        if (alignments[index]) cell.style.textAlign = alignments[index];
+                        row.append(cell);
+                    });
+                    tbody.append(row);
+                }
+                if (bodyRows.length) table.append(tbody);
+                root.append(table);
             }
 
             function renderDOM(source) {
@@ -290,6 +425,7 @@
             }
 
             async function selectEditor(type, surface = activeSurface) {
+                const generation = ++viewGeneration;
                 activeMode = 'editor';
                 activeType = type;
                 activeSurface = surface;
@@ -302,16 +438,25 @@
                 markSurface(activeSurface);
                 markSelected(editorTabs, type);
                 languageControl.hidden = type !== 'code';
+                languageHelp.hidden = type !== 'code';
                 sourceTitle.textContent = 'Editor source';
                 detailsTitle.textContent = 'Editor details';
                 detailsConsole.hidden = false;
+                workspaceElement.hidden = false;
                 domInspector.hidden = type !== 'dom';
                 previewPanel.hidden = true;
                 workspace.classList.add('single');
                 if (activeEditor) {
                     activeEditor.editor?.uninit?.(domClassInput);
                     CoCreate.editor.destroyEditor(activeEditor);
+                    activeEditor = null;
                 }
+                status.classList.remove('error');
+                status.textContent = type === 'markdown' ? 'Loading the README example…'
+                    : `Initializing ${type}${type === 'code' ? ` / ${activeLanguage}` : ''}…`;
+                const source = type === 'markdown' ? await loadMarkdownSample()
+                    : type === 'code' ? samples[activeLanguage] : samples[type];
+                if (generation !== viewGeneration) return;
                 const editor = document.createElement(type === 'text' && surface === 'input' ? 'input'
                     : type === 'text' && surface === 'textarea' ? 'textarea' : 'div');
                 editor.className = 'source-input';
@@ -320,7 +465,6 @@
                 if (editor.tagName === 'DIV') editor.setAttribute('contenteditable', 'true');
                 if (editor.tagName !== 'INPUT') editor.setAttribute('spellcheck', 'false');
                 if (type === 'code') editor.setAttribute('editor-language', activeLanguage);
-                const source = type === 'code' ? samples[activeLanguage] : samples[type];
                 if (editor.tagName === 'DIV') editor.textContent = source;
                 else editor.value = source;
                 if (editor.tagName === 'INPUT') editor.type = 'text';
@@ -330,6 +474,9 @@
                 detailsView.textContent = 'Waiting for observer…';
                 status.classList.remove('error');
                 status.textContent = `Initializing ${type}${type === 'code' ? ` / ${activeLanguage}` : ''}…`;
+                loadingDescription.textContent = type === 'code'
+                    ? 'Loading the code editor. Choose a language below; only that language module loads.'
+                    : `Loading the ${type} editor and the components it needs.`;
                 try {
                     await waitForReady(editor);
                     const initialDetails = CoCreate.editor.getStoredEditorDetails(editor) || [];
@@ -362,6 +509,7 @@
             }
 
             async function selectParser(type) {
+                const generation = ++viewGeneration;
                 clearTimeout(parseTimer);
                 activeMode = 'parser';
                 activeType = type;
@@ -373,16 +521,23 @@
                 textSurfaces.hidden = true;
                 markSelected(parserTabs, type);
                 languageControl.hidden = type !== 'code';
+                languageHelp.hidden = type !== 'code';
                 sourceTitle.textContent = 'Parser input';
                 detailsTitle.textContent = 'Parser details';
                 detailsConsole.hidden = true;
+                workspaceElement.hidden = false;
                 previewPanel.hidden = false;
                 workspace.classList.remove('single');
                 previewTitle.textContent = type === 'markdown' ? 'Rendered Markdown' : 'Code preview';
                 if (activeEditor) CoCreate.editor.destroyEditor(activeEditor);
                 activeEditor = null;
+                status.classList.remove('error');
+                status.textContent = type === 'markdown' ? 'Loading the README example…'
+                    : `Loading ${type}${type === 'code' ? ` / ${activeLanguage}` : ''} parser input…`;
+                const sourceValue = type === 'markdown' ? await loadMarkdownSample() : samples[activeLanguage];
+                if (generation !== viewGeneration) return;
                 const source = document.createElement('textarea');
-                source.value = type === 'code' ? samples[activeLanguage] : samples.markdown;
+                source.value = sourceValue;
                 source.setAttribute('aria-label', `${type} parser input`);
                 source.addEventListener('input', () => {
                     clearTimeout(parseTimer);
@@ -392,8 +547,42 @@
                 detailsView.textContent = 'Parsing source…';
                 status.classList.remove('error');
                 status.textContent = `${type}${type === 'code' ? ` / ${activeLanguage}` : ''} parser selected`;
+                loadingDescription.textContent = type === 'code'
+                    ? 'Loading the code parser. Choose a language below; only that language parser loads. No editor is initialized.'
+                    : 'Loading the Markdown parser only. No editor or editor details are initialized.';
                 await parseSource();
             }
+
+            function selectMode(mode) {
+                viewGeneration++;
+                clearTimeout(parseTimer);
+                if (activeEditor) {
+                    activeEditor.editor?.uninit?.(domClassInput);
+                    CoCreate.editor.destroyEditor(activeEditor);
+                    activeEditor = null;
+                }
+                host.replaceChildren();
+                activeMode = mode;
+                activeType = null;
+                markMode(mode);
+                editorTabs.hidden = mode !== 'editor';
+                parserTabs.hidden = mode !== 'parser';
+                editorOptions.hidden = true;
+                textSurfaces.hidden = true;
+                languageControl.hidden = true;
+                languageHelp.hidden = true;
+                previewPanel.hidden = true;
+                detailsConsole.hidden = true;
+                domInspector.hidden = true;
+                workspaceElement.hidden = true;
+                loadingDescription.textContent = mode === 'editor'
+                    ? 'Choose Text, DOM, Markdown, or Code. The selected editor loads on demand.'
+                    : 'Choose Markdown or Code. Parser mode loads only the selected parser and does not initialize an editor.';
+                status.textContent = mode === 'editor' ? 'Choose an editor type.' : 'Choose a parser.';
+                status.classList.remove('error');
+            }
+
+            selectMode('editor');
 
             async function parseSource() {
                 const input = host.querySelector('textarea');
@@ -419,8 +608,8 @@
             }
 
             modeControl.querySelectorAll('[data-mode]').forEach(button => button.addEventListener('click', () => {
-                if (button.dataset.mode === 'editor') selectEditor(['text', 'dom', 'markdown', 'code'].includes(activeType) ? activeType : 'text');
-                else selectParser(activeType === 'code' ? 'code' : 'markdown');
+                if (button.dataset.mode === 'parser') selectParser('markdown');
+                else selectMode('editor');
             }));
             textSurfaces.querySelectorAll('[data-surface]').forEach(button => button.addEventListener('click', () => {
                 selectEditor('text', button.dataset.surface);
@@ -444,7 +633,6 @@
                 status.classList.add('error');
             });
 
-            selectEditor('text');
         </script>
     </body>
 </html>

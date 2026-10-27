@@ -1,12 +1,17 @@
 {
   "name": "@cocreate/editor",
   "version": "1.0.0",
-  "description": "CoCreate Editor for text, code, Markdown and HTML with detached rendering and optional CRDT synchronization.",
+  "description": "Extensible collaborative editor for text, HTML/DOM, Markdown, and code with syntax highlighting and optional CRDT sync.",
   "keywords": [
     "cocreate",
     "editor",
     "text",
     "code",
+    "editor-framework",
+    "extensible",
+    "parser",
+    "rendering",
+    "crdt",
     "syntax-highlighting",
     "html",
     "markdown"

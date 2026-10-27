@@ -3,6 +3,8 @@
  * fetched only when a matching editor appears or a parser API is called.
  */
 
+import "./index.css";
+
 const editorSelector = ":is([editor], [editor-language], [contenteditable]):not([contenteditable='false']):not([editor-query]), input[editor-query], textarea[editor-query], input[realtime][array][object][key], textarea[realtime][array][object][key], input[crdt='true'][array][object][key], textarea[crdt='true'][array][object][key]";
 const parserLoaders = {
     dom: () => import(/* webpackChunkName: "editor-parser-dom" */ "./editors/parsers/dom.js"),
