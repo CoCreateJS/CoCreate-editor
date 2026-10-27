@@ -130,7 +130,8 @@ export function createPrototypeCore({ updateText, eventTarget = globalThis.windo
             let result;
             if (state.mode === "text") result = state.module.updateEditor(element, update, state.source);
             else {
-                result = updateStoredEditorDetails(element, update);
+                result = updateStoredEditorDetails(element,
+                    update.local || echo ? { ...update, local: true } : update);
                 if (result && typeof result.then === "function") result = await result;
             }
             if (state) {

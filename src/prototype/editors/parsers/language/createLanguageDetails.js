@@ -1,5 +1,3 @@
-import { createEditorDetailsCollection } from "../../utilities/createEditorDetails.js";
-
 function* tokenizeRules(source, definitions) {
     const rules = definitions.map(definition => ({
         definition,
@@ -94,10 +92,15 @@ function addToken(collection, source, token, language) {
     });
 }
 
-/** Turn one language's token stream or lexical rules into source details. */
-export function createLanguageDetails(source, language, tokenSource, editor = null) {
+/** Turn one language's token stream or lexical rules into plain source records. */
+export function createLanguageDetails(source, language, tokenSource) {
     if (typeof source !== "string") throw new TypeError("Code source must be a string.");
-    const collection = createEditorDetailsCollection({ editor, dom: false });
+    const records = [];
+    const collection = { add(data) {
+        const record = { ...data, length: data.value.length };
+        records.push(record);
+        return record;
+    } };
     const tokens = Array.isArray(tokenSource)
         ? tokenizeRules(source, tokenSource)
         : tokenSource || [];
@@ -114,7 +117,7 @@ export function createLanguageDetails(source, language, tokenSource, editor = nu
     }
     if (position < source.length)
         addPlainSource(collection, source, position, source.length, language);
-    return collection.toArray();
+    return records;
 }
 
 export default createLanguageDetails;

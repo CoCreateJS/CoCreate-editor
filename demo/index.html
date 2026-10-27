@@ -3,7 +3,7 @@
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>CoCreate Editor Prototype</title>
+        <title>CoCreate Editor</title>
         <style>
             :root { color-scheme: light; font: 16px/1.5 system-ui, sans-serif; color: #20242b; background: #f5f7fa; }
             body { max-width: 68rem; margin: 2.5rem auto; padding: 0 1.25rem; }
@@ -14,18 +14,28 @@
             .tabs button { border: 0; border-bottom: 3px solid transparent; background: transparent; padding: .65rem 1rem; font: inherit; cursor: pointer; }
             .tabs button[aria-selected="true"] { color: #4c3ab5; border-bottom-color: #6750d8; font-weight: 650; }
             .toolbar { min-height: 2.5rem; display: flex; align-items: center; gap: 1rem; margin: 1rem 0; }
+            .control-group { display: inline-flex; gap: .15rem; padding: .2rem; border: 1px solid #c8ced8; border-radius: .4rem; background: white; }
+            .control-group button { border: 0; border-radius: .25rem; background: transparent; padding: .4rem .75rem; font: inherit; cursor: pointer; }
+            .control-group button[aria-pressed="true"] { background: #6750d8; color: white; }
+            .language-options { flex-wrap: wrap; }
+            .subcontrols { display: flex; align-items: center; gap: 1rem; min-height: 2.5rem; margin: -.5rem 0 1rem; }
             label { display: flex; align-items: center; gap: .5rem; }
             select, textarea, button { font: inherit; }
             select, .action { padding: .4rem .6rem; }
             .action { border: 1px solid #c8ced8; border-radius: .3rem; background: white; cursor: pointer; }
-            .workspace { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; align-items: start; }
+            .workspace { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; align-items: stretch; }
             .workspace.single { grid-template-columns: minmax(0, 1fr); }
             .panel { min-width: 0; border: 1px solid #d7dce4; border-radius: .6rem; background: white; overflow: hidden; }
             .panel h2 { font-size: .95rem; margin: 0; padding: .7rem .9rem; border-bottom: 1px solid #e5e8ed; }
+            .workspace:not(.single) .panel { display: flex; flex-direction: column; }
+            .workspace:not(.single) #editor-host, .workspace:not(.single) #preview-content { flex: 1; min-height: 0; }
+            .workspace:not(.single) #editor-host > textarea { height: 100%; min-height: 24rem; }
             .source-input { box-sizing: border-box; display: block; width: 100%; min-height: 24rem; padding: .9rem; outline: 0; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; font: 14px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
+            input.source-input { min-height: 0; height: auto; }
             textarea { box-sizing: border-box; display: block; width: 100%; min-height: 24rem; resize: vertical; padding: .9rem; border: 0; outline: 0; tab-size: 4; font: 14px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
             pre { box-sizing: border-box; margin: 0; min-height: 24rem; max-height: 34rem; overflow: auto; padding: .85rem; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
             #preview-content { box-sizing: border-box; max-height: 34rem; overflow: auto; padding: .85rem; }
+            .workspace:not(.single) #preview-content { max-height: none; }
             #preview-content pre { min-height: 0; max-height: none; padding: 0; }
             .details-console { margin-top: 1rem; }
             .details-console pre { min-height: 8rem; max-height: 20rem; background: #171923; color: #e2e5ef; }
@@ -35,34 +45,14 @@
         </style>
     </head>
     <body>
-        <h1>CoCreate Editor Prototype</h1>
+        <h1>CoCreate Editor</h1>
         <p class="intro">Editor mode initializes an editable source surface. Parser mode runs Markdown or code parsing on demand without creating an editor.</p>
 
         <div class="toolbar">
-            <label>Mode
-                <select id="mode">
-                    <option value="editor">Editor</option>
-                    <option value="parser">Parser</option>
-                </select>
-            </label>
-            <label id="language-control" hidden>Code language
-                <select id="language">
-                    <option value="javascript">JavaScript</option>
-                    <option value="html">HTML</option>
-                    <option value="css">CSS</option>
-                    <option value="json">JSON</option>
-                    <option value="python">Python</option>
-                    <option value="typescript">TypeScript</option>
-                    <option value="sql">SQL</option>
-                    <option value="bash">Bash</option>
-                    <option value="yaml">YAML</option>
-                    <option value="c">C</option>
-                    <option value="go">Go</option>
-                    <option value="java">Java</option>
-                    <option value="php">PHP</option>
-                </select>
-            </label>
-            <button id="parse-source" class="action" type="button" hidden>Parse source</button>
+            <div id="mode-control" class="control-group" role="group" aria-label="Mode">
+                <button type="button" aria-pressed="true" data-mode="editor">Editor</button>
+                <button type="button" aria-pressed="false" data-mode="parser">Parser</button>
+            </div>
             <span id="status" role="status">Starting prototype…</span>
         </div>
 
@@ -75,6 +65,28 @@
         <div id="parser-tabs" class="tabs" role="tablist" aria-label="Parser type" hidden>
             <button type="button" role="tab" aria-selected="true" data-type="markdown">Markdown</button>
             <button type="button" role="tab" aria-selected="false" data-type="code">Code</button>
+        </div>
+        <div id="editor-options" class="subcontrols" hidden>
+            <div id="text-surfaces" class="control-group" role="group" aria-label="Text editor surface" hidden>
+                <button type="button" aria-pressed="true" data-surface="contenteditable">Contenteditable</button>
+                <button type="button" aria-pressed="false" data-surface="textarea">Textarea</button>
+                <button type="button" aria-pressed="false" data-surface="input">Input</button>
+            </div>
+            <div id="language-control" class="control-group language-options" role="group" aria-label="Code language" hidden>
+                <button type="button" aria-pressed="true" data-language="javascript">JavaScript</button>
+                <button type="button" aria-pressed="false" data-language="html">HTML</button>
+                <button type="button" aria-pressed="false" data-language="css">CSS</button>
+                <button type="button" aria-pressed="false" data-language="json">JSON</button>
+                <button type="button" aria-pressed="false" data-language="python">Python</button>
+                <button type="button" aria-pressed="false" data-language="typescript">TypeScript</button>
+                <button type="button" aria-pressed="false" data-language="sql">SQL</button>
+                <button type="button" aria-pressed="false" data-language="bash">Bash</button>
+                <button type="button" aria-pressed="false" data-language="yaml">YAML</button>
+                <button type="button" aria-pressed="false" data-language="c">C</button>
+                <button type="button" aria-pressed="false" data-language="go">Go</button>
+                <button type="button" aria-pressed="false" data-language="java">Java</button>
+                <button type="button" aria-pressed="false" data-language="php">PHP</button>
+            </div>
         </div>
 
         <div class="workspace">
@@ -120,22 +132,27 @@
             };
             const host = document.querySelector('#editor-host');
             const detailsView = document.querySelector('#details-view');
+            const detailsConsole = document.querySelector('.details-console');
             const previewPanel = document.querySelector('#preview-panel');
             const previewContent = document.querySelector('#preview-content');
             const previewTitle = document.querySelector('#preview-title');
             const workspace = document.querySelector('.workspace');
             const status = document.querySelector('#status');
             const languageControl = document.querySelector('#language-control');
-            const language = document.querySelector('#language');
-            const mode = document.querySelector('#mode');
+            let activeLanguage = 'javascript';
+            const modeControl = document.querySelector('#mode-control');
             const editorTabs = document.querySelector('#editor-tabs');
             const parserTabs = document.querySelector('#parser-tabs');
-            const parseButton = document.querySelector('#parse-source');
+            const editorOptions = document.querySelector('#editor-options');
+            const textSurfaces = document.querySelector('#text-surfaces');
             const sourceTitle = document.querySelector('#source-title');
             const detailsTitle = document.querySelector('#details-title');
             let activeEditor = null;
             let activeMode = 'editor';
             let activeType = 'text';
+            let activeSurface = 'contenteditable';
+            let parseVersion = 0;
+            let parseTimer;
 
             function formatDetails(details) {
                 detailsView.textContent = details.map((detail, index) => {
@@ -223,7 +240,7 @@
                     renderMarkdown(renderedDetails);
                 } else if (type === 'dom') renderDOM(source);
                 else if (type === 'code') {
-                    const tokens = await CoCreate.editor.parseCode(source, language.value);
+                    const tokens = await CoCreate.editor.parseCode(source, activeLanguage);
                     renderCode(tokens);
                 }
             }
@@ -231,6 +248,24 @@
             function markSelected(tabs, type) {
                 tabs.querySelectorAll('[role="tab"]').forEach(tab => {
                     tab.setAttribute('aria-selected', String(tab.dataset.type === type));
+                });
+            }
+
+            function markMode(mode) {
+                modeControl.querySelectorAll('[data-mode]').forEach(button => {
+                    button.setAttribute('aria-pressed', String(button.dataset.mode === mode));
+                });
+            }
+
+            function markSurface(surface) {
+                textSurfaces.querySelectorAll('[data-surface]').forEach(button => {
+                    button.setAttribute('aria-pressed', String(button.dataset.surface === surface));
+                });
+            }
+
+            function markLanguage(language) {
+                languageControl.querySelectorAll('[data-language]').forEach(button => {
+                    button.setAttribute('aria-pressed', String(button.dataset.language === language));
                 });
             }
 
@@ -242,41 +277,50 @@
                 });
             }
 
-            async function selectEditor(type) {
+            async function selectEditor(type, surface = activeSurface) {
                 activeMode = 'editor';
                 activeType = type;
-                mode.value = 'editor';
+                activeSurface = surface;
+                markMode('editor');
+                markLanguage(activeLanguage);
                 editorTabs.hidden = false;
                 parserTabs.hidden = true;
+                editorOptions.hidden = false;
+                textSurfaces.hidden = type !== 'text';
+                markSurface(activeSurface);
                 markSelected(editorTabs, type);
                 languageControl.hidden = type !== 'code';
-                parseButton.hidden = true;
                 sourceTitle.textContent = 'Editor source';
                 detailsTitle.textContent = 'Editor details';
+                detailsConsole.hidden = false;
                 previewPanel.hidden = true;
                 workspace.classList.add('single');
                 if (activeEditor) CoCreate.editor.destroyEditor(activeEditor);
-                const editor = document.createElement('div');
+                const editor = document.createElement(type === 'text' && surface === 'input' ? 'input'
+                    : type === 'text' && surface === 'textarea' ? 'textarea' : 'div');
                 editor.className = 'source-input';
                 editor.setAttribute('editor', type);
                 editor.setAttribute('crdt', 'false');
-                editor.setAttribute('contenteditable', 'true');
-                editor.setAttribute('spellcheck', 'false');
-                if (type === 'code') editor.setAttribute('editor-language', language.value);
-                editor.value = type === 'code' ? samples[language.value] : samples[type];
+                if (editor.tagName === 'DIV') editor.setAttribute('contenteditable', 'true');
+                if (editor.tagName !== 'INPUT') editor.setAttribute('spellcheck', 'false');
+                if (type === 'code') editor.setAttribute('editor-language', activeLanguage);
+                const source = type === 'code' ? samples[activeLanguage] : samples[type];
+                if (editor.tagName === 'DIV') editor.textContent = source;
+                else editor.value = source;
+                if (editor.tagName === 'INPUT') editor.type = 'text';
                 editor.setAttribute('aria-label', `${type} editor source`);
                 host.replaceChildren(editor);
                 activeEditor = editor;
                 detailsView.textContent = 'Waiting for observer…';
                 status.classList.remove('error');
-                status.textContent = `Initializing ${type}${type === 'code' ? ` / ${language.value}` : ''}…`;
+                status.textContent = `Initializing ${type}${type === 'code' ? ` / ${activeLanguage}` : ''}…`;
                 try {
                     await waitForReady(editor);
                     const initialDetails = CoCreate.editor.getStoredEditorDetails(editor) || [];
                     formatDetails(initialDetails);
                     editor.addEventListener('editor-details-change', event =>
                         formatDetails(event.detail.result.editorDetails));
-                    status.textContent = `${type}${type === 'code' ? ` / ${language.value}` : ''} editor ready`;
+                    status.textContent = `${type}${type === 'code' ? ` / ${activeLanguage}` : ''} editor ready`;
                 } catch (error) {
                     status.textContent = `Initialization failed: ${error.message}`;
                     status.classList.add('error');
@@ -284,64 +328,81 @@
             }
 
             async function selectParser(type) {
+                clearTimeout(parseTimer);
                 activeMode = 'parser';
                 activeType = type;
-                mode.value = 'parser';
+                markMode('parser');
+                markLanguage(activeLanguage);
                 editorTabs.hidden = true;
                 parserTabs.hidden = false;
+                editorOptions.hidden = false;
+                textSurfaces.hidden = true;
                 markSelected(parserTabs, type);
                 languageControl.hidden = type !== 'code';
-                parseButton.hidden = false;
                 sourceTitle.textContent = 'Parser input';
                 detailsTitle.textContent = 'Parser details';
+                detailsConsole.hidden = true;
                 previewPanel.hidden = false;
                 workspace.classList.remove('single');
                 previewTitle.textContent = type === 'markdown' ? 'Rendered Markdown' : 'Code preview';
                 if (activeEditor) CoCreate.editor.destroyEditor(activeEditor);
                 activeEditor = null;
                 const source = document.createElement('textarea');
-                source.value = type === 'code' ? samples[language.value] : samples.markdown;
+                source.value = type === 'code' ? samples[activeLanguage] : samples.markdown;
                 source.setAttribute('aria-label', `${type} parser input`);
+                source.addEventListener('input', () => {
+                    clearTimeout(parseTimer);
+                    parseTimer = setTimeout(parseSource, type === 'code' ? 120 : 0);
+                });
                 host.replaceChildren(source);
-                detailsView.textContent = 'Run the parser to inspect its records.';
+                detailsView.textContent = 'Parsing source…';
                 status.classList.remove('error');
-                status.textContent = `${type}${type === 'code' ? ` / ${language.value}` : ''} parser selected`;
+                status.textContent = `${type}${type === 'code' ? ` / ${activeLanguage}` : ''} parser selected`;
+                await parseSource();
             }
 
             async function parseSource() {
-                const source = host.querySelector('textarea').value;
+                const input = host.querySelector('textarea');
+                if (!input || activeMode !== 'parser') return;
+                const version = ++parseVersion;
+                const source = input.value;
                 detailsView.textContent = 'Parsing source…';
                 status.classList.remove('error');
-                status.textContent = `Loading ${activeType}${activeType === 'code' ? ` / ${language.value}` : ''} parser…`;
+                status.textContent = `Loading ${activeType}${activeType === 'code' ? ` / ${activeLanguage}` : ''} parser…`;
                 try {
-                    const details = activeType === 'markdown'
+                    const records = activeType === 'markdown'
                         ? await CoCreate.editor.parseMarkdown(source)
-                        : await CoCreate.editor.parseCode(source, language.value);
-                    formatDetails(details);
-                    if (activeType === 'markdown') renderMarkdown(details);
-                    else renderCode(details);
-                    status.textContent = `${activeType}${activeType === 'code' ? ` / ${language.value}` : ''} parser ready`;
+                        : await CoCreate.editor.parseCode(source, activeLanguage);
+                    if (version !== parseVersion || activeMode !== 'parser') return;
+                    if (activeType === 'markdown') renderMarkdown(records);
+                    else renderCode(records);
+                    status.textContent = `${activeType}${activeType === 'code' ? ` / ${activeLanguage}` : ''} parser ready`;
                 } catch (error) {
-                    detailsView.textContent = error.stack || error.message;
+                    if (version !== parseVersion || activeMode !== 'parser') return;
                     status.textContent = `Parser failed: ${error.message}`;
                     status.classList.add('error');
                 }
             }
 
-            mode.addEventListener('change', () => {
-                if (mode.value === 'editor') selectEditor(['text', 'dom', 'markdown', 'code'].includes(activeType) ? activeType : 'text');
+            modeControl.querySelectorAll('[data-mode]').forEach(button => button.addEventListener('click', () => {
+                if (button.dataset.mode === 'editor') selectEditor(['text', 'dom', 'markdown', 'code'].includes(activeType) ? activeType : 'text');
                 else selectParser(activeType === 'code' ? 'code' : 'markdown');
-            });
+            }));
+            textSurfaces.querySelectorAll('[data-surface]').forEach(button => button.addEventListener('click', () => {
+                selectEditor('text', button.dataset.surface);
+            }));
             editorTabs.querySelectorAll('[role="tab"]').forEach(tab => tab.addEventListener('click', () => selectEditor(tab.dataset.type)));
             parserTabs.querySelectorAll('[role="tab"]').forEach(tab => tab.addEventListener('click', () => selectParser(tab.dataset.type)));
-            parseButton.addEventListener('click', parseSource);
-            language.addEventListener('change', () => {
-                if (activeType !== 'code') return;
+            languageControl.addEventListener('click', event => {
+                const button = event.target.closest('[data-language]');
+                if (!button || activeType !== 'code') return;
+                activeLanguage = button.dataset.language;
+                markLanguage(activeLanguage);
                 if (activeMode === 'editor') selectEditor('code');
                 else {
-                    host.querySelector('textarea').value = samples[language.value];
-                    detailsView.textContent = 'Run the parser to inspect its records.';
-                    status.textContent = `code / ${language.value} parser selected`;
+                    host.querySelector('textarea').value = samples[activeLanguage];
+                    status.textContent = `code / ${activeLanguage} parser selected`;
+                    parseSource();
                 }
             });
             document.addEventListener('editor-error', event => {

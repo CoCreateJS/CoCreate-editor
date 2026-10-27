@@ -1,12 +1,12 @@
 import parseMarkdown from "./parsers/markdown.js";
-import { bindEditorDetailsLiveDOM } from "./utilities/createEditorDetails.js";
+import { bindEditorDetailsLiveDOM, createEditorDetailsFromRecords } from "./utilities/createEditorDetails.js";
 
 const renderedState = new WeakMap();
 const isVisibleText = detail => ["text", "codeText", "whitespace", "tab", "lineBreak"].includes(detail.kind);
 
 /** Build Markdown editor state from source and its flat detail records. */
 export async function createMarkdownEditor(source, editor = null) {
-    const details = await parseMarkdown(source, editor);
+    const details = createEditorDetailsFromRecords(await parseMarkdown(source), editor);
     return { type: "markdown", source, details, editor,
         update: updateMarkdownEditorDetails };
 }
@@ -581,7 +581,7 @@ export async function updateEditor(element, update, previousSource) {
     const source = previousSource.slice(0, start) + value + previousSource.slice(end);
     if (typeof update.string === "string" && update.string !== source)
         throw new RangeError("CRDT update does not match the previous Markdown source.");
-    const editorDetails = await parseMarkdown(source, element);
+    const editorDetails = createEditorDetailsFromRecords(await parseMarkdown(source), element);
     renderEditor(element, source, editorDetails);
     return { previousSource, source, editorDetails, start, end, value };
 }

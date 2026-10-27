@@ -1,15 +1,15 @@
 import parseCode, { loadCodeLanguage, normalizeCodeLanguage, resolveCodeLanguage } from "./parsers/code.js";
 import { createLanguageDetails } from "./parsers/language/createLanguageDetails.js";
-import { bindEditorDetailsLiveDOM } from "./utilities/createEditorDetails.js";
+import { bindEditorDetailsLiveDOM, createEditorDetailsFromRecords } from "./utilities/createEditorDetails.js";
 import { getSelection as readSelection, setSelection as restoreSelection } from "../selection.js";
 
 /** Build code editor state using the selected language parser. */
 export async function createCodeEditor(source, language, editor = null) {
     language = resolveCodeLanguage(source, language);
     const parser = await loadCodeLanguage(language);
-    const parse = (value, host) => parser
-        ? parser.parseCode(value, host)
-        : createLanguageDetails(value, language, [], host);
+    const parse = value => createEditorDetailsFromRecords(parser
+        ? parser.parseCode(value)
+        : createLanguageDetails(value, language, []), editor);
     return {
         type: "code",
         language,

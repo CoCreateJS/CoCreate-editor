@@ -58,19 +58,19 @@ export function normalizeCodeLanguage(language) {
     return aliases[value] || value;
 }
 
-export async function parseDOM(source, editor = null) {
+export async function parseDOM(source) {
     const parser = await loadParser("dom");
-    return parser.default(source, editor);
+    return parser.default(source);
 }
 
-export async function parseMarkdown(source, editor = null) {
+export async function parseMarkdown(source) {
     const parser = await loadParser("markdown");
-    return parser.default(source, editor);
+    return parser.default(source);
 }
 
-export async function parseCode(source, language, editor = null) {
+export async function parseCode(source, language) {
     const parser = await loadParser("code");
-    return parser.parseCode(source, language, editor);
+    return parser.parseCode(source, language);
 }
 
 export async function autoLanguageDetection(source) {

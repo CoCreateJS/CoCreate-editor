@@ -46,12 +46,12 @@ export async function loadCodeLanguage(language = "text") {
 }
 
 /** Select a copied language parser and return its source-preserving details. */
-export async function parseCode(source, language, editor = null) {
+export async function parseCode(source, language) {
     if (typeof source !== "string") throw new TypeError("Code source must be a string.");
     language = resolveCodeLanguage(source, language);
     const module = await loadCodeLanguage(language);
-    if (!module) return createLanguageDetails(source, language, [], editor);
-    return module.parseCode(source, editor);
+    if (!module) return createLanguageDetails(source, language, []);
+    return module.parseCode(source);
 }
 
 export { autoLanguageDetection };

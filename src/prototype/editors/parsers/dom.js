@@ -15,18 +15,14 @@
  * error recovery, namespaces, and implied elements are future parser work.
  */
 
-import { createEditorDetailsCollection } from "../utilities/createEditorDetails.js";
-
-const voidElements = new Set([
-    "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
-    "meta", "param", "source", "track", "wbr"
-]);
+import { getPotentialDOMTagFlags, matchCompleteDOMElements } from "./matchDOMTag.js";
+import voidElements, { isVoidElement } from "./voidElements.js";
 const rawTextElements = new Set(["script", "style", "textarea", "title"]);
 const nameStart = /[A-Za-z]/;
 const nameCharacter = /[A-Za-z0-9:_-]/;
 const whitespace = /[\t\n\f\r ]/;
 
-export const isVoidElement = tag => voidElements.has(tag);
+export { isVoidElement };
 
 function createRecordFactory(collection) {
     const record = (kind, value, parentDetails, extra = {}) => collection.add({
@@ -94,7 +90,8 @@ function pushText(record, source, start, end, parentDetails) {
     if (previous?.kind === "text" && !previous.sourceOnly && previous.parentDetails === parentDetails) {
         previous.value += value;
         previous.length = previous.value.length;
-    } else record("text", value, parentDetails);
+        Object.assign(previous, getPotentialDOMTagFlags(previous.value));
+    } else record("text", value, parentDetails, getPotentialDOMTagFlags(value));
 }
 
 function pushRawMarkup(record, source, start, end, parentDetails, kind = "markup", complete = true) {
@@ -102,12 +99,22 @@ function pushRawMarkup(record, source, start, end, parentDetails, kind = "markup
     record(kind, value, parentDetails, { complete });
 }
 
-/** Parse DOM/HTML source into flat, position-free editor-detail records. */
-export function parseDOM(source, editor = null) {
+/** Parse DOM/HTML source into flat, position-free source records. */
+export function parseDOM(source) {
     if (typeof source !== "string") throw new TypeError("HTML source must be a string.");
 
-    const collection = createEditorDetailsCollection({ editor, dom: true });
-    const details = collection.details;
+    // Only promote non-void start tags when a matching close makes the element
+    // resolvable. Unmatched tag syntax stays in text details for later repair.
+    const resolvedStarts = new Set(matchCompleteDOMElements(source, 0, source.length)
+        .filter(match => !match.closing && !match.selfClosing)
+        .map(match => match.start));
+
+    const details = [];
+    const collection = { details, add(data) {
+        const record = { ...data, length: data.value.length };
+        details.push(record);
+        return record;
+    } };
     const record = createRecordFactory(collection);
     const openElements = [];
     const parent = () => openElements.at(-1) || null;
@@ -177,12 +184,24 @@ export function parseDOM(source, editor = null) {
             while (matchingIndex >= 0 && openElements[matchingIndex].tag !== tag) matchingIndex--;
             const matching = openElements[matchingIndex];
             const closeEnd = tagEnd + 1;
+            if (!matching) {
+                pushText(record, source, index, closeEnd, parent());
+                index = closeEnd;
+                continue;
+            }
             record("elementEnd", source.slice(index, closeEnd), matching || parent(), {
                 tag,
                 complete: true
             });
             if (matching) openElements.length = matchingIndex;
             index = closeEnd;
+            continue;
+        }
+
+        if (!isVoidElement(tag) && !resolvedStarts.has(index)) {
+            const openEnd = tagEnd + 1;
+            pushText(record, source, index, openEnd, parent());
+            index = openEnd;
             continue;
         }
 

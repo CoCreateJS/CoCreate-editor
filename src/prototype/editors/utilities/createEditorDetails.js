@@ -238,4 +238,18 @@ export function createEditorDetailsCollection({ editor = null, dom = false } = {
     };
 }
 
+/** Convert plain parser records into editor-owned details only when needed. */
+export function createEditorDetailsFromRecords(records, editor = null, { dom = false } = {}) {
+    if (!Array.isArray(records)) throw new TypeError("Parser records must be an array.");
+    const details = [];
+    const references = new WeakMap();
+    for (const record of records) {
+        const data = { ...record, editor,
+            parentDetails: references.get(record.parentDetails) || null };
+        const detail = createEditorDetails(data, details, { dom });
+        references.set(record, detail);
+    }
+    return details;
+}
+
 export default createEditorDetails;

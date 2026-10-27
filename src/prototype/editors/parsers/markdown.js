@@ -1,4 +1,3 @@
-import { createEditorDetailsCollection } from "../utilities/createEditorDetails.js";
 import parseCodeSource, { resolveCodeLanguage } from "./code.js";
 
 const isWhitespace = character => /[ \t\f]/.test(character || "");
@@ -305,10 +304,15 @@ function collectSyntax(source, lines) {
     return { marks: unique, codeRanges, codeFences, lineKinds, tableAlignments };
 }
 
-/** Parse Markdown source into flat, source-preserving editor-detail records. */
-export async function parseMarkdown(source, editor = null) {
+/** Parse Markdown source into flat, source-preserving records. */
+export async function parseMarkdown(source) {
     if (typeof source !== "string") throw new TypeError("Markdown source must be a string.");
-    const collection = createEditorDetailsCollection({ editor, dom: false });
+    const records = [];
+    const collection = { add(data) {
+        const record = { ...data, length: data.value.length };
+        records.push(record);
+        return record;
+    } };
     const lines = getLines(source);
     const { marks, codeRanges, codeFences, lineKinds, tableAlignments } = collectSyntax(source, lines);
     const codeTokens = [];
@@ -316,7 +320,7 @@ export async function parseMarkdown(source, editor = null) {
         const body = source.slice(fence.bodyStart, fence.bodyEnd);
         const language = resolveCodeLanguage(body, fence.codeLanguage);
         fence.openMark.resolvedCodeLanguage = language;
-        const details = await parseCodeSource(body, fence.codeLanguage || undefined, editor);
+        const details = await parseCodeSource(body, fence.codeLanguage || undefined);
         let tokenPosition = fence.bodyStart;
         for (const detail of details) {
             codeTokens.push({ start: tokenPosition, end: tokenPosition + detail.length,
@@ -396,7 +400,7 @@ export async function parseMarkdown(source, editor = null) {
         position = end;
     }
 
-    return collection.toArray();
+    return records;
 }
 
 export default parseMarkdown;

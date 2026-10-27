@@ -1,4 +1,5 @@
 import parseDOM, { isVoidElement } from "../parsers/dom.js";
+import { getPotentialDOMTagFlags, matchCompleteDOMElements } from "../parsers/matchDOMTag.js";
 import { detailsToSource, planDetailsEdit } from "./lengthEditorDetails.js";
 
 const signature = detail => JSON.stringify([detail.kind, detail.nodeType, detail.tag, detail.name,
@@ -61,18 +62,57 @@ function keepsContainer(parsed, container) {
     return true;
 }
 
+function hasTextAtSourcePosition(details, position) {
+    let cursor = 0;
+    let previous = null;
+    for (const detail of details) {
+        const end = cursor + detail.length;
+        if (position < end) return detail.kind === "text";
+        if (position === end) previous = detail;
+        cursor = end;
+    }
+    return position === cursor && previous?.kind === "text";
+}
+
+function resolvesTextTag(details, matches, start, end, value) {
+    const insertedEnd = start + value.length;
+    const delta = value.length - (end - start);
+    return matches.some(match => {
+        // Map the new opening-tag offset back to the old source. If it was
+        // inserted/replaced, the edit's old location must have been text.
+        const openingStart = match.start;
+        if (openingStart >= start && openingStart < insertedEnd)
+            return hasTextAtSourcePosition(details, start);
+        const previousStart = openingStart >= insertedEnd ? openingStart - delta : openingStart;
+        return hasTextAtSourcePosition(details, previousStart);
+    });
+}
+
+function needsTagMatch(value, removed, detail) {
+    return /[<>="'\/]/.test(value + removed) || !!detail?.potentialTags?.length ||
+        (!!detail?.value?.includes("<") && /[<>]/.test(value + removed));
+}
+
 function planTextEdit(details, start, end, value) {
     let position = 0;
     for (const detail of details) {
         const next = position + detail.length;
         const contains = start < next || (start === next && detail.kind === "text");
         if (!contains) { position = next; continue; }
-        if (detail.kind !== "text" || detail.sourceOnly || end > next ||
-            detail.value.includes("<") || value.includes("<")) return null;
-        const nextValue = detail.value.slice(0, start - position) + value + detail.value.slice(end - position);
+        if (detail.kind !== "text" || detail.sourceOnly || end > next) return null;
+        const localStart = start - position;
+        const localEnd = end - position;
+        const nextValue = detail.value.slice(0, localStart) + value + detail.value.slice(localEnd);
+        // Keep incomplete markup as text. Only a complete element, or a void
+        // element, promotes that text into DOM details and triggers a reparse.
+        const removed = detail.value.slice(localStart, localEnd);
+        if (needsTagMatch(value, removed, detail) &&
+            matchCompleteDOMElements(nextValue, localStart, localStart + value.length).length) return null;
         const retained = details.filter(item => item !== detail);
         return { affected: [detail], retained, added: [], reparse: null,
-            edited: nextValue ? [{ detail, value: nextValue, changes: { value: nextValue, length: nextValue.length } }] : [],
+            edited: nextValue ? [{ detail, value: nextValue, changes: {
+                value: nextValue, length: nextValue.length, ...getPotentialDOMTagFlags(nextValue)
+            } }] : [],
             removed: nextValue ? [] : [{ detail, start: position, end: next }],
             nextDetails: nextValue ? [...details] : retained };
     }
@@ -92,8 +132,30 @@ export function planDOMEdit(details, start, end, value, { parse = parseDOM, edit
         sourceEdit: { start, end, value } };
     if (source === previousSource) return { ...base, affected: [], retained: [...details], edited: [],
         removed: [], added: [], nextDetails: [...details], reparse: null };
-    const textEdit = planTextEdit(details, start, end, value);
-    if (textEdit) return { ...base, ...textEdit };
+    // A closing tag can resolve an opening tag stored in a different text
+    // detail. Check the resulting source before taking the local text fast path.
+    let changedText = false;
+    let detailStart = 0;
+    const removedSource = previousSource.slice(start, end);
+    for (const detail of details) {
+        const detailEnd = detailStart + detail.length;
+        const affected = start === end
+            ? detailStart <= start && start <= detailEnd
+            : detailStart < end && start < detailEnd;
+        if (affected && detail.kind === "text" && needsTagMatch(value, removedSource, detail)) {
+            changedText = true;
+            break;
+        }
+        detailStart = detailEnd;
+    }
+    const resolvedTags = changedText
+        ? matchCompleteDOMElements(source, start, start + value.length)
+        : [];
+    const resolveText = resolvesTextTag(details, resolvedTags, start, end, value);
+    if (!resolveText) {
+        const textEdit = planTextEdit(details, start, end, value);
+        if (textEdit) return { ...base, ...textEdit };
+    }
 
     const raw = planDetailsEdit(details, start, end, value);
     const { ranges, units, subtrees } = indexDetails(details);
@@ -109,7 +171,7 @@ export function planDOMEdit(details, start, end, value, { parse = parseDOM, edit
     let right = Math.min(units.length - 1, Math.max(first, last) + 1);
     const firstDetail = affected[0] || ranges.find(range => range.start <= start && start < range.end)?.detail;
     const lastDetail = affected.at(-1) || firstDetail;
-    let container = sharedContainer(firstDetail, lastDetail);
+    let container = resolveText ? null : sharedContainer(firstDetail, lastDetail);
     let parseStart, parseEnd, fromIndex, toIndex, externalParent, parsed, parseSource;
     const fragment = () => previousSource.slice(parseStart, start) + value + previousSource.slice(end, parseEnd);
     while (container) {
@@ -130,10 +192,10 @@ export function planDOMEdit(details, start, end, value, { parse = parseDOM, edit
         container = container.parentDetails;
     }
     if (!container) {
-        parseStart = units[left]?.start ?? 0;
-        parseEnd = units[right]?.end ?? previousSource.length;
-        fromIndex = units[left]?.startIndex ?? 0;
-        toIndex = units[right]?.endIndex ?? details.length;
+        parseStart = resolveText ? 0 : units[left]?.start ?? 0;
+        parseEnd = resolveText ? previousSource.length : units[right]?.end ?? previousSource.length;
+        fromIndex = resolveText ? 0 : units[left]?.startIndex ?? 0;
+        toIndex = resolveText ? details.length : units[right]?.endIndex ?? details.length;
         externalParent = null;
         parseSource = fragment();
         parsed = parse(parseSource, editor);
@@ -217,7 +279,8 @@ export function planDOMEdit(details, start, end, value, { parse = parseDOM, edit
             added.push(fresh);
         } else {
             const changes = {};
-            for (const key of ["value", "length", "kind", "nodeType", "tag", "name", "sourceOnly", "complete", "selfClosing"])
+            for (const key of ["value", "length", "kind", "nodeType", "tag", "name", "sourceOnly", "complete", "selfClosing",
+                "potentialTags", "potentialOpenTag", "potentialClosingTag"])
                 if (detail[key] !== fresh[key]) changes[key] = fresh[key];
             if (detail.parentDetails !== parentDetails) changes.parentDetails = parentDetails;
             if (Object.keys(changes).length) edited.push({ detail, value: fresh.value, changes });

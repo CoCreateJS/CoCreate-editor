@@ -2,6 +2,7 @@ import { bindEditorDetailsLiveDOM } from "./createEditorDetails.js";
 
 const states = new WeakMap();
 const childContainer = node => node?.localName === "template" && node.content ? node.content : node;
+const breakPlaceholder = "data-cocreate-dom-break";
 
 function bind(detail, node, property) {
     if (property === "liveDOM") bindEditorDetailsLiveDOM(detail, node);
@@ -48,7 +49,10 @@ function renderRoot(root, details, property, plan) {
     const operations = { added: [], removed: [], updated: [], moved: [] };
     if (previous && plan.reparse === null && !plan.added?.length && !plan.removed?.length &&
         (plan.edited || []).every(({ detail, changes }) => detail.kind === "text" && !detail.sourceOnly &&
-            detail[property]?.nodeType === 3 && Object.keys(changes || {}).every(key => ["value", "length"].includes(key)))) {
+            detail[property]?.nodeType === 3 && !/[\r\n]$/.test(detail.value) &&
+            !detail[property].nextSibling?.hasAttribute?.("data-cocreate-dom-break") &&
+            Object.keys(changes || {}).every(key => ["value", "length", "potentialTags",
+                "potentialOpenTag", "potentialClosingTag"].includes(key)))) {
         for (const { detail } of plan.edited || []) {
             const node = detail[property], value = textValue(detail, node.ownerDocument);
             if (node.data !== value) {
@@ -64,12 +68,16 @@ function renderRoot(root, details, property, plan) {
     const attributes = new Map();
     const nodes = new Set();
     const addedNodes = new Set();
+    const starts = new Map();
     const append = (parent, node) => {
         if (!children.has(parent)) children.set(parent, []);
         children.get(parent).push(node);
         nodes.add(node);
     };
+    let sourcePosition = 0;
     for (const detail of details) {
+        starts.set(detail, sourcePosition);
+        sourcePosition += detail.length;
         if (detail.sourceOnly) continue;
         const owner = detail.parentDetails?.[property] || root;
         const parent = detail.kind === "attribute" ? owner : childContainer(owner);
@@ -112,6 +120,36 @@ function renderRoot(root, details, property, plan) {
                 desired.set(name.toLowerCase(), { detail, name, value });
             }
         }
+    }
+
+    // A terminal LF in a contenteditable text node often has no visible caret
+    // line in Chromium. The BR is a projection-only anchor, not source data.
+    for (const detail of details) {
+        if (detail.kind !== "text" || detail.sourceOnly || !/[\r\n]$/.test(detail.value)) continue;
+        const node = detail[property];
+        const parent = childContainer(detail.parentDetails?.[property] || root);
+        const ordered = children.get(parent);
+        if (!node || ordered?.at(-1) !== node) continue;
+        const placeholder = document.createElement("br");
+        placeholder.setAttribute(breakPlaceholder, String(starts.get(detail) + detail.length));
+        append(parent, placeholder);
+        operations.added.push(placeholder);
+        addedNodes.add(placeholder);
+    }
+
+    // Give contenteditable a real caret position after a final root element.
+    // This BR is projection-only so the source and CRDT remain unchanged.
+    const lastDetail = details.at(-1);
+    const lastElement = lastDetail?.kind === "elementEnd" &&
+        lastDetail.parentDetails && !lastDetail.parentDetails.parentDetails
+        ? lastDetail.parentDetails : null;
+    const rootChildren = children.get(host);
+    if (lastElement?.[property] && rootChildren?.at(-1) === lastElement[property]) {
+        const placeholder = document.createElement("br");
+        placeholder.setAttribute(breakPlaceholder, String(sourcePosition));
+        append(host, placeholder);
+        operations.added.push(placeholder);
+        addedNodes.add(placeholder);
     }
 
     // All final node/attribute lists exist before the first existing node changes.
