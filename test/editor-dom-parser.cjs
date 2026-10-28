@@ -11,7 +11,8 @@ function assertSource(details, source) {
     let position = 0;
     for (let index = 0; index < details.length; index++) {
         const detail = details[index];
-        assert.equal(detail.getStart(), position);
+        for (const key of ['start', 'end', 'contentStart', 'contentEnd'])
+            assert.equal(Object.hasOwn(detail, key), false, `raw parser records do not store ${key}`);
         assert.equal(detail.length, detail.value.length);
         assert.ok(detail.length > 0);
         assert.ok(!(detail.kind === 'text' && details[index - 1]?.kind === 'text'),
@@ -32,10 +33,10 @@ test('DOM keeps tag whitespace separate from attributes without producing live t
     ]);
     const element = details[0];
     assert.equal(element.nodeType, 1);
-    for (const detail of details.slice(1)) assert.equal(detail.parentDetails, element);
+    for (const detail of details.slice(1)) assert.equal(detail.parentNode, element);
     const spacing = details.filter(detail => detail.kind === 'text' && detail.sourceOnly);
     assert.equal(spacing.length, 3);
-    assert.ok(spacing.every(detail => detail.nodeType === 3 && detail.liveDOM === null));
+    assert.ok(spacing.every(detail => detail.nodeType === 3 && !Object.hasOwn(detail, 'liveNode')));
     assert.ok(details.filter(detail => ['markup', 'elementEnd'].includes(detail.kind))
         .every(detail => detail.sourceOnly && detail.nodeType === null));
 });
@@ -76,18 +77,18 @@ test('a broken opening tag in the middle stays text while following complete ele
     assertSource(details, source);
     const elements = details.filter(detail => detail.kind === 'element');
     assert.deepEqual(elements.map(detail => detail.tag), ['h3', 'input', 'img', 'p']);
-    assert.ok(elements.every(detail => detail.parentDetails === null));
+    assert.ok(elements.every(detail => detail.parentNode === null));
     const broken = details.find(detail => detail.kind === 'text' && detail.value.includes('<div'));
     assert.equal(broken.value, '\n<div class="broken"  data-note="missing closing angle"\n');
     assert.equal(broken.sourceOnly, undefined);
-    assert.equal(broken.parentDetails, null);
+    assert.equal(broken.parentNode, null);
     assert.ok(!details.some(detail => detail.kind === 'attribute' && detail.name === 'data-note'));
     assert.ok(details.some(detail => detail.sourceOnly && detail.value === '  '));
     assert.ok(details.some(detail => detail.sourceOnly && detail.value === '   '));
     assert.ok(details.some(detail => detail.kind === 'attribute' && detail.value === 'class="title  primary"'));
     for (const tag of ['input', 'img']) {
         const element = elements.find(detail => detail.tag === tag);
-        assert.ok(details.some(detail => detail.kind === 'attribute' && detail.parentDetails === element));
+        assert.ok(details.some(detail => detail.kind === 'attribute' && detail.parentNode === element));
         assert.ok(!details.some(detail => detail.kind === 'elementEnd' && detail.tag === tag));
     }
     assert.ok(details.some(detail => detail.kind === 'attribute' && detail.name === 'disabled' && detail.value === 'disabled'));
@@ -135,14 +136,12 @@ test('DOM preserves raw text and comment boundaries without parsing their inner 
     assert.equal(details.find(detail => detail.kind === 'comment').value, '<!-- <b> -->');
 });
 
-test('source-only tag spacing is never constructed as a live Text node by the renderer', () => {
+test('source-only tag spacing remains a source record without a live node', () => {
     const details = parseDOM('<p   class="x">content</p>');
     const spacing = details.find(detail => detail.sourceOnly && detail.kind === 'text');
-    const editor = { liveDOM: { ownerDocument: {
-        createTextNode() { assert.fail('tag spacing must not produce a live Text node'); }
-    } } };
-    renderEditor(editor, { editorDetails: [spacing], added: [spacing] });
-    assert.equal(spacing.liveDOM, null);
+    assert.equal(spacing.value, '   ');
+    assert.equal(spacing.nodeType, 3);
+    assert.equal(Object.hasOwn(spacing, 'liveNode'), false);
 });
 
 test('DOM details cover exact source lengths across deterministic combinations of incomplete markup', () => {

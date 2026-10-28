@@ -4,6 +4,7 @@ import observer from "@cocreate/observer";
 
 const bindings = new WeakMap();
 const queryBindings = new WeakMap();
+const projectionSelector = "[editor-query], [editor-attribute], [editor-property]";
 let queryElementsPromise;
 
 function attributeRange(editor, part) {
@@ -370,7 +371,8 @@ export async function initEditorQuery(receiver, { context = receiver?.ownerDocum
     const resolve = async () => {
         const currentGeneration = ++generation;
         const nextTarget = query ? await findTarget(context, query)
-            : sourceEditor?.element || sourceEditor?.parentNode?.liveNode || sourceEditor?.liveNode || null;
+            : (sourceEditor?.kind === "attribute" ? sourceEditor.parentNode?.liveNode
+                : sourceEditor?.liveNode) || sourceEditor?.element || null;
         if (currentGeneration !== generation || controller.signal.aborted) return;
         if (query) queryTarget = nextTarget;
         const nextSourceEditor = query ? nextTarget?.editor || null : sourceEditor;
@@ -431,6 +433,10 @@ export async function initEditorQuery(receiver, { context = receiver?.ownerDocum
         });
     };
     const onEditorReady = event => {
+        if (query && (!queryTarget || !currentEditor)) {
+            resolve().then(attachHostClick).catch(error => reportQueryObserverError(receiver, error));
+            return;
+        }
         if (!queryTarget || (event.target !== queryTarget && !queryTarget.contains?.(event.target))) return;
         attachHostClick();
         if (holdClearedAttributeProjection()) return;
@@ -488,7 +494,8 @@ function reportQueryObserverError(element, error) {
     }));
 }
 
-function initializeObservedProjection(element) {
+function initializeObservedProjection(element, context = element.ownerDocument) {
+    if (queryBindings.has(element)) return Promise.resolve(queryBindings.get(element));
     const query = element.getAttribute("editor-query");
     const attribute = element.getAttribute("editor-attribute");
     const property = element.getAttribute("editor-property");
@@ -496,10 +503,18 @@ function initializeObservedProjection(element) {
     const hasDirectAttribute = Boolean(attribute?.trim()) ||
         (element.editor?.kind === "attribute" && Boolean(property?.trim()));
     if (!hasQuery && !(element.editor && hasDirectAttribute)) return;
-    initEditorQuery(element, {
-        context: element.ownerDocument,
+    return initEditorQuery(element, {
+        context,
         query: hasQuery ? query : ""
     }).catch(error => reportQueryObserverError(element, error));
+}
+
+/** Initialize the controls already present when this module is loaded. */
+export function init(root = globalThis.document) {
+    if (!root?.querySelectorAll) return Promise.resolve([]);
+    const elements = [...root.querySelectorAll(projectionSelector)];
+    if (root.matches?.(projectionSelector)) elements.unshift(root);
+    return Promise.all(elements.map(element => initializeObservedProjection(element, root)));
 }
 
 function reinitializeObservedQuery(mutation) {
@@ -534,7 +549,7 @@ observer.init([
     {
         name: "CoCreateEditorProjectionAddedNodes",
         types: ["addedNodes"],
-        selector: "[editor-query], [editor-attribute], [editor-property]",
+        selector: projectionSelector,
         callback: mutation => initializeObservedProjection(mutation.target)
     },
     {
@@ -593,5 +608,7 @@ observer.init([
         callback: mutation => reinitializeObservedQuery(mutation)
     }
 ]);
+
+init();
 
 export default initEditorInput;

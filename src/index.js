@@ -6,7 +6,9 @@
 import "./index.css";
 import * as lengthEditorDetails from "./editors/utilities/lengthEditorDetails.js";
 
-const editorSelector = ":is([editor], [editor-language], [contenteditable], input[crdt='true'], textarea[crdt='true']):not([contenteditable='false']):not([editor-query]), [editor-query]";
+const editorSelector = ":is([editor], [editor-language], [contenteditable], input[crdt='true'], textarea[crdt='true']):not([contenteditable='false']):not([editor-query])";
+const bindingSelector = "[editor-query], [editor-attribute], [editor-property]";
+const activationSelector = `${editorSelector}, ${bindingSelector}`;
 const parserLoaders = {
     dom: () => import(/* webpackChunkName: "editor-parser-dom" */ "./editors/parsers/dom.js"),
     markdown: () => import(/* webpackChunkName: "editor-parser-markdown" */ "./editors/parsers/markdown.js"),
@@ -15,6 +17,7 @@ const parserLoaders = {
 
 let runtimePromise;
 let runtimeModule;
+let inputBindingPromise;
 const parserPromises = new Map();
 
 function loadRuntime() {
@@ -22,6 +25,12 @@ function loadRuntime() {
         .then(module => { runtimeModule = module; return module; })
         .catch(error => { runtimePromise = undefined; throw error; });
     return runtimePromise;
+}
+
+function loadInputBinding() {
+    inputBindingPromise ||= import(/* webpackChunkName: "editor-input-binding" */ "./inputBinding.js")
+        .catch(error => { inputBindingPromise = undefined; throw error; });
+    return inputBindingPromise;
 }
 
 export function loadParser(type) {
@@ -49,7 +58,12 @@ export const parseMarkdown = async source => (await loadParser("markdown")).defa
 export const parseCode = async (source, language) => (await loadParser("code")).parseCode(source, language);
 export const autoLanguageDetection = async source => (await loadParser("code")).autoLanguageDetection(source);
 
-export const init = (...args) => callRuntime("init", args);
+export async function init(root = globalThis.document) {
+    const editors = await callRuntime("init", [root]);
+    if (root?.matches?.(bindingSelector) || root?.querySelector?.(bindingSelector))
+        await (await loadInputBinding()).init(root);
+    return editors;
+}
 export const initElements = (...args) => callRuntime("initElements", args);
 export const initElement = (...args) => callRuntime("initElement", args);
 export const createEditorCore = (...args) => callRuntime("createEditorCore", args);
@@ -87,14 +101,15 @@ function reportError(element, error) {
     }));
 }
 
-function matchesEditor(node) {
-    return node?.nodeType === 1 && node.matches?.(editorSelector);
-}
-
 function activate(node) {
-    if (matchesEditor(node)) loadRuntime().catch(error => reportError(node, error));
-    node?.querySelectorAll?.(editorSelector).forEach(element =>
-        loadRuntime().catch(error => reportError(element, error)));
+    const activateElement = element => {
+        if (element.matches(editorSelector))
+            loadRuntime().catch(error => reportError(element, error));
+        if (element.matches(bindingSelector))
+            loadInputBinding().catch(error => reportError(element, error));
+    };
+    if (node?.nodeType === 1) activateElement(node);
+    node?.querySelectorAll?.(activationSelector).forEach(activateElement);
 }
 
 function observeDocument() {
@@ -112,7 +127,8 @@ function observeDocument() {
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ["editor", "editor-language", "contenteditable", "editor-query", "crdt"]
+        attributeFilter: ["editor", "editor-language", "contenteditable", "editor-query",
+            "editor-attribute", "editor-property", "crdt"]
     });
 }
 

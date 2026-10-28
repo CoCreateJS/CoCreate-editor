@@ -12,7 +12,6 @@ import { textChange } from "./textChange.js";
 import observer from "@cocreate/observer";
 const editorCore = createEditorCore();
 const editorSelector = ":is([editor], [editor-language], [contenteditable], input[crdt='true'], textarea[crdt='true']):not([contenteditable='false']):not([editor-query])";
-const editorProjectionSelector = "[editor-query], [editor-attribute], [editor-property]";
 let inputBindingPromise;
 let crdtPromise;
 const crdtMethods = ["getText", "replaceText", "updateText", "undoText", "redoText",
@@ -191,20 +190,8 @@ export function initElements(elements) {
 export async function init(root = globalThis.document) {
     if (!root?.querySelectorAll) return [];
     const elements = [...root.querySelectorAll(editorSelector)];
-    const editors = await initElements(elements);
-    const receivers = [...root.querySelectorAll(editorProjectionSelector)].filter(element => {
-        const query = element.getAttribute("editor-query");
-        const attribute = element.getAttribute("editor-attribute");
-        const property = element.getAttribute("editor-property");
-        const hasDirectAttribute = Boolean(attribute?.trim()) ||
-            (element.editor?.kind === "attribute" && Boolean(property?.trim()));
-        return Boolean(query?.trim()) || Boolean(element.editor && hasDirectAttribute);
-    });
-    await Promise.all(receivers.map(element => initEditorQuery(element, {
-        context: root,
-        query: element.getAttribute("editor-query")
-    })));
-    return editors;
+    if (root.matches?.(editorSelector)) elements.unshift(root);
+    return initElements(elements);
 }
 
 const editor = {
@@ -248,11 +235,6 @@ observer.init([
 
 export default editor;
 
-if (typeof document !== "undefined") {
-    const start = () => init().catch(error => {
-        console.error("CoCreate editor initialization failed", error);
-    });
-    if (document.readyState === "loading")
-        document.addEventListener("DOMContentLoaded", start, { once: true });
-    else queueMicrotask(start);
-}
+init().catch(error => {
+    console.error("CoCreate editor initialization failed", error);
+});

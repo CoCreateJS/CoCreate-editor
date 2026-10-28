@@ -58,14 +58,22 @@ its text content; Markdown and code use the same source-backed approach.
 
 ## Lazy loading
 
-The initial bundle is a loader. The runtime is requested only when an editor
-surface is found or an editor API is called. Parser APIs load parser code
-directly without initializing the editor runtime or creating editor objects.
+The initial bundle is a loader. Editor surfaces request the runtime, and binding
+controls request the input-binding module. Calling an editor API loads its
+runtime implementation. Parser APIs load parser code directly without
+initializing the editor runtime or creating editor objects.
 Editor modes and code languages are split into asynchronous chunks and cached
 after first use. Code language modules load on demand: selecting a language
 loads its tokenizer, while Markdown code fences resolve their labeled or
 detected language during parsing. An absent or unsupported code-editor language
 can also be resolved through language detection.
+
+The loader uses native mutation observation to request the relevant modules.
+Each module scans for its existing elements when it loads and directly registers
+its own CoCreate Observer callbacks for later additions and attribute changes.
+The runtime owns editor surfaces; the input-binding module owns `editor-query`,
+`editor-attribute`, and `editor-property` controls. Renderer-assigned editor
+objects can initialize controls without an `editor-query`.
 
 Supported code languages include HTML, CSS, JavaScript, JSON, Python,
 TypeScript, SQL, Bash, YAML, C, Go, Java, and PHP. Common aliases include `js`,

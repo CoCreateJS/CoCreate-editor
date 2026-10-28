@@ -4,8 +4,8 @@ const assert = require("node:assert/strict");
 let editorAPI;
 let lengthEditorDetails;
 test("load editor APIs", async () => {
-    editorAPI = await import("../src/index.js");
-    ({ lengthEditorDetails } = editorAPI);
+    editorAPI = await import("../src/editors/index.js");
+    lengthEditorDetails = await import("../src/editors/utilities/lengthEditorDetails.js");
 });
 
 test("DOM parser creates an ordered, source-preserving detail array", async () => {
@@ -20,7 +20,7 @@ test("DOM parser creates an ordered, source-preserving detail array", async () =
     for (const detail of details) {
         assert.equal(detail.getStart(), position);
         assert.equal(detail.length, detail.value.length);
-        assert.equal(detail.editor, editor);
+        assert.equal(detail.element, editor);
         position += detail.length;
     }
     assert.equal(position, source.length);
@@ -30,7 +30,7 @@ test("DOM parser creates an ordered, source-preserving detail array", async () =
 
 test("DOM parser keeps each contiguous text run in one detail and edits it in place at its end", async () => {
     const source = "<p>alpha  beta\n\tgamma</p>\n<div>next line</div>";
-    const details = await editorAPI.parseDOM(source);
+    const details = (await editorAPI.createDOMEditor(source)).details;
     const text = details.filter(detail => detail.kind === "text");
 
     assert.deepEqual(text.map(detail => detail.value), ["alpha  beta\n\tgamma", "\n", "next line"]);
@@ -111,11 +111,11 @@ test("element attribute APIs resolve attribute details and dispatch CRDT ranges"
             return name.toLowerCase() === "class" ? nativeAttribute : null;
         }
     };
-    editorAPI.bindEditorDetailsLiveDOM(element, liveElement);
+    editorAPI.bindEditorNode(element, liveElement);
 
     const attribute = element.getAttribute("class");
     assert.equal(attribute.kind, "attribute");
-    assert.equal(attribute.liveDOM, nativeAttribute);
+    assert.equal(attribute.liveNode, nativeAttribute);
 
     element.setAttribute("class", "new");
     attribute.remove();
@@ -131,6 +131,47 @@ test("element attribute APIs resolve attribute details and dispatch CRDT ranges"
     assert.equal(element.getAttribute("missing"), null);
 });
 
+test("element attribute collections return the source-backed attribute editor objects", async () => {
+    const editor = { editor: { updateText() {} } };
+    const details = await editorAPI.parseAndStoreEditorDetails(editor,
+        '<div class="sample" title="label" style="color: red"></div>');
+    const element = details.find(detail => detail.kind === "element");
+    const expected = details.filter(detail => detail.kind === "attribute");
+    const attributes = element.getAttributes();
+    const liveAttributes = new Map(expected.map(attribute => [attribute.name,
+        { name: attribute.name, value: attribute.value }]));
+    editorAPI.bindEditorNode(element, {
+        getAttributeNode(name) { return liveAttributes.get(name) || null; }
+    });
+
+    assert.equal(attributes.length, 3);
+    assert.ok(attributes.every((attribute, index) => attribute === expected[index]));
+    assert.equal(element.getAttribute("style"), expected[2]);
+});
+
+test("style detail APIs parse and dispatch property-level source edits", async () => {
+    const operations = [];
+    const editor = { editor: { updateText: operation => operations.push(operation) } };
+    const source = '<div style="color: red; padding: 1px"></div>';
+    const details = await editorAPI.parseAndStoreEditorDetails(editor, source);
+    const style = details.find(detail => detail.kind === "attribute" && detail.name === "style");
+
+    assert.deepEqual(style.getStyles(), [
+        { property: "color", value: "red" },
+        { property: "padding", value: "1px" }
+    ]);
+    style.setStyle("color", "blue");
+    style.setStyle("margin", 0);
+    await style.removeStyle("padding");
+
+    assert.deepEqual(operations, [
+        { start: source.indexOf("red"), length: 3, value: "blue" },
+        { start: source.indexOf('"></div>'),
+            length: 0, value: "; margin: 0" },
+        { start: source.indexOf("; padding"), length: "; padding: 1px".length, value: "" }
+    ]);
+});
+
 test("Markdown details preserve delimiters, content, and individual whitespace nodes without DOM APIs", async () => {
     const tick = String.fromCharCode(96);
     const source = "# Heading **bold**\r\n- item [link](url)\n\n\tcode " + tick + "x * y" + tick + "\n";
@@ -144,7 +185,7 @@ test("Markdown details preserve delimiters, content, and individual whitespace n
     assert.equal(heading.tag, "h1");
     assert.equal(heading.nodeType, 3, "Markdown semantic tags are not DOM Element nodes");
     assert.equal(details[details.indexOf(heading) + 1].kind, "whitespace");
-    assert.equal(details[details.indexOf(heading) + 1].parentDetails, heading);
+    assert.equal(details[details.indexOf(heading) + 1].parentNode, heading);
     assert.ok(details.some(detail => detail.syntax === "strong-open"));
     assert.ok(details.some(detail => detail.syntax === "link-destination-open"));
     assert.ok(details.some(detail => detail.syntax === "code-open"));
@@ -152,7 +193,7 @@ test("Markdown details preserve delimiters, content, and individual whitespace n
     assert.ok(details.some(detail => detail.kind === "tab" && detail.value === "\t"));
     assert.ok(details.filter(detail => detail.kind === "whitespace")
         .every(detail => detail.value.length === 1 && detail.length === 1));
-    assert.ok(details.every(detail => detail.nodeType === 3 && detail.editor === editor));
+    assert.ok(details.every(detail => detail.nodeType === 3 && detail.element === editor));
     assert.equal(details[0].getAttribute, undefined);
 });
 
@@ -174,7 +215,7 @@ test("code bridge selects language tokenizers and preserves every source charact
     assert.ok(jsDetails.some(detail => detail.token === "keyword" && detail.value === "const"));
     assert.ok(jsDetails.some(detail => detail.token === "string" && detail.value === '"yes"'));
     assert.ok(jsDetails.some(detail => detail.kind === "lineBreak" && detail.value === "\n"));
-    assert.ok(jsDetails.every(detail => detail.editor === editor && detail.getAttribute === undefined));
+    assert.ok(jsDetails.every(detail => detail.element === editor && detail.getAttribute === undefined));
 
     const html = '<p class="x">Hi</p>';
     const htmlDetails = await editorAPI.parseCode(html, "html", editor);
