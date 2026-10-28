@@ -1,8 +1,9 @@
 import { bindEditorInput } from "./events.js";
 import { getSelection, setSelection } from "./selection.js";
+import observer from "@cocreate/observer";
 
 const bindings = new WeakMap();
-const attributeRenderBindings = new WeakMap();
+const queryBindings = new WeakMap();
 let queryElementsPromise;
 
 function attributeRange(editor, part) {
@@ -65,22 +66,16 @@ function editorAttribute(input) {
 }
 
 function isStateControl(input) {
-    return ["checkbox", "radio", "date", "datetime-local", "month", "time", "week"]
+    return ["checkbox", "radio", "date", "datetime", "datetime-local", "file", "month", "time", "week"]
         .includes(input.type?.toLowerCase());
 }
 
 function setControlValue(input, value) {
-    if (typeof input.setValue === "function") input.setValue(value);
-    else if (input.type === "radio") input.checked = String(input.value) === String(value ?? "");
-    else if (input.type === "checkbox") input.checked = value === true || value === input.value ||
-        (Array.isArray(value) && value.includes(input.value));
-    else input.value = value ?? "";
+    input.setValue(value);
 }
 
 function readControlValue(input) {
-    if (typeof input.getValue === "function") return input.getValue();
-    if (input.type === "radio") return input.checked ? input.value : "";
-    return input.checked;
+    return input.getValue();
 }
 
 function readElementTag(target) {
@@ -112,24 +107,15 @@ async function findTarget(context, selector) {
 export async function initEditorInput(input, { context = input?.ownerDocument, query,
     target: initialTarget, attribute, part = "value" } = {}) {
     if (!input?.addEventListener) throw new TypeError("An input element is required.");
-    input.editor ||= {};
-    input.editor.element = input;
-    if (typeof input.editor.init !== "function") input.editor.init = options => initEditorInput(input, options);
-    if (typeof input.editor.uninit !== "function") input.editor.uninit = () => uninitEditorInput(input);
     const descriptor = typeof attribute === "string" ? { name: attribute } : attribute;
     const name = descriptor?.name || input.getAttribute("editor-attribute") || editorAttribute(input);
     const editorType = input.getAttribute("editor-type") || (name ? "attribute" : "text");
     const control = isStateControl(input);
-    const fileInput = input.type?.toLowerCase() === "file";
     const mode = editorType === "attribute" || (name && editorType !== "element") ? "attribute"
         : editorType === "element" ? "element" : "text";
     part = descriptor?.part || input.getAttribute("editor-attribute-part") || part;
     const property = input.getAttribute("editor-property") || descriptor?.property || null;
     query ||= input.getAttribute("editor-query");
-    if (fileInput) {
-        bindings.get(input)?.disconnect();
-        return null;
-    }
     if (mode === "attribute" && !name)
         throw new TypeError('Attribute controls require an editor.<name> attribute or editor-attribute.');
     if (mode === "attribute" && part !== "name" && part !== "value")
@@ -153,54 +139,24 @@ export async function initEditorInput(input, { context = input?.ownerDocument, q
     const syncControl = value => {
         if (!control) return;
         syncingControl = true;
-        try {
-            if (["date", "datetime-local", "month", "time", "week"].includes(input.type)) {
-                setControlValue(input, value);
-                return;
-            }
-            if (input.type === "radio") setControlValue(input, value);
-            else if (mode === "attribute" && name.toLowerCase() === "class")
-                setControlValue(input, String(value || "").split(/[\t\n\f\r ]+/).includes(input.value));
-            else if (mode === "attribute") setControlValue(input, target?.hasAttribute?.(name) || false);
-            else setControlValue(input, value !== null && value !== undefined && value !== "" && value !== false);
-        } finally { syncingControl = false; }
+        try { setControlValue(input, value); }
+        finally { syncingControl = false; }
     };
 
     const writeControl = () => {
         if (syncingControl || !target || !control) return;
         const editor = target.editor;
         if (!editor) return;
-        if (["date", "datetime-local", "month", "time", "week"].includes(input.type)) {
-            const value = readControlValue(input);
-            if (mode === "attribute") return reportControlUpdate(input, () => editor.setAttribute?.(name, value));
-            if (mode === "text") return reportControlUpdate(input,
-                () => getTextEditor(target)?.setValue(String(value ?? "")));
-            return;
-        }
+        const value = readControlValue(input);
+        if (mode === "attribute" && property)
+            return reportControlUpdate(input, () => getAttributeEditor(target, name)?.setStyle(property, value));
+        if (mode === "attribute")
+            return reportControlUpdate(input, () => editor.setAttribute?.(name, value));
         if (mode === "element") {
-            if (input.type === "radio" && input.checked && typeof editor.setTagName === "function")
-                return reportControlUpdate(input, () => editor.setTagName(input.value));
-            return;
+            return reportControlUpdate(input, () => editor.setTagName?.(value));
         }
         if (mode === "text")
-            return reportControlUpdate(input, () => getTextEditor(target)?.setValue(String(readControlValue(input) ?? "")));
-        if (mode !== "attribute") return;
-        const current = target.getAttribute(name);
-        if (input.type === "radio") {
-            if (input.checked) return reportControlUpdate(input,
-                () => editor.setAttribute?.(name, readControlValue(input)));
-            return;
-        }
-        if (name.toLowerCase() === "class") {
-            const tokens = new Set(String(current || "").split(/[\t\n\f\r ]+/).filter(Boolean));
-            if (input.checked) tokens.add(input.value);
-            else tokens.delete(input.value);
-            return reportControlUpdate(input, () => tokens.size
-                ? editor.setAttribute?.(name, [...tokens].join(" "))
-                : editor.removeAttribute?.(name));
-        }
-        return reportControlUpdate(input, () => input.checked
-            ? editor.setAttribute?.(name, "") : editor.removeAttribute?.(name));
+            return reportControlUpdate(input, () => getTextEditor(target)?.setValue(String(value ?? "")));
     };
 
     let generation = 0;
@@ -271,40 +227,6 @@ export async function initEditorInput(input, { context = input?.ownerDocument, q
         mapSelection: false,
         onUpdate: write
     });
-    const document = context?.nodeType === 9 ? context
-        : context?.tagName === "IFRAME" ? context.contentDocument
-            : context?.ownerDocument || context?.document;
-    const refresh = event => {
-        const clicked = event?.target;
-        const control = clicked?.matches?.("input[editor-query], textarea[editor-query]")
-            ? clicked : clicked?.closest?.("label")?.querySelector?.("input[editor-query], textarea[editor-query]");
-        if (control) return;
-        queueMicrotask(() => resolve().catch(() => {}));
-    };
-    document?.addEventListener?.("click", refresh, { signal: controller.signal });
-    const frameDocuments = new WeakSet();
-    const watchFrame = frame => {
-        try {
-            const frameDocument = frame.contentDocument;
-            if (!frameDocument || frameDocuments.has(frameDocument)) return;
-            frameDocuments.add(frameDocument);
-            frameDocument.addEventListener("click", refresh, { signal: controller.signal });
-        } catch { /* Cross-origin frames cannot expose click state to this editor. */ }
-    };
-    if (document?.querySelectorAll) {
-        document.querySelectorAll("iframe").forEach(watchFrame);
-        const MutationObserver = document.defaultView?.MutationObserver;
-        if (MutationObserver && document.documentElement) {
-            const observer = new MutationObserver(records => {
-                for (const record of records) for (const node of record.addedNodes) {
-                    if (node.tagName === "IFRAME") watchFrame(node);
-                    node.querySelectorAll?.("iframe").forEach(watchFrame);
-                }
-            });
-            observer.observe(document.documentElement, { childList: true, subtree: true });
-            controller.signal.addEventListener("abort", () => observer.disconnect(), { once: true });
-        }
-    }
     const onDetailsChange = event => {
         if (event.target !== target && !event.target?.contains?.(target)) return;
         const current = mode === "element" ? target?.editor : getCurrentDetail();
@@ -359,74 +281,197 @@ export async function initEditorInput(input, { context = input?.ownerDocument, q
     await resolve();
     const targetDocument = target?.ownerDocument;
     targetDocument?.addEventListener?.("editor-details-change", onDetailsChange, { signal: controller.signal });
-    if (document && targetDocument !== document)
-        document.addEventListener?.("editor-details-change", onDetailsChange, { signal: controller.signal });
     return binding;
 }
 
-/** Bind an attribute renderer to the clicked element's source-backed attributes. */
-export async function initEditorAttributes(element, { context = element?.ownerDocument, query } = {}) {
-    if (!element?.addEventListener) throw new TypeError("An attribute renderer element is required.");
-    if (typeof element.renderValue !== "function")
-        throw new TypeError("An attribute renderer must expose renderValue().");
-    query ||= element.getAttribute("editor-query");
-    if (!query) throw new TypeError('Attribute renderers require "editor-query".');
+function editorProjection(receiver, editor) {
+    if (Array.isArray(editor)) return editor;
+    if (editor?.kind === "attribute") {
+        const name = receiver.getAttribute?.("editor-attribute");
+        return !name?.trim() || editor.name?.toLowerCase() === name.trim().toLowerCase() ? editor : null;
+    }
+    const attributeName = receiver.getAttribute?.("editor-attribute");
+    if (attributeName?.trim())
+        return editor?.getAttribute?.(attributeName.trim()) || null;
+    if (receiver.hasAttribute?.("editor-attributes"))
+        return editor?.getAttributes?.() || [];
+    if (receiver.hasAttribute?.("editor-nodes"))
+        return editor?.nodes || [];
+    return editor;
+}
 
-    attributeRenderBindings.get(element)?.disconnect();
+function isEditorHost(element) {
+    const editor = element?.editor;
+    return Boolean(editor && editor.element === element && Array.isArray(editor.nodes) &&
+        typeof editor.init === "function");
+}
+
+function clickedEditorSource(receiver, event) {
+    const node = event.detail?.target || event.target;
+    if (!node?.nodeType) return null;
+
+    const requiresElementEditor = receiver.hasAttribute?.("editor-attribute") ||
+        receiver.hasAttribute?.("editor-attributes");
+    const requiresAttributeCollection = receiver.hasAttribute?.("editor-attributes");
+    for (let current = node; current; current = current.parentNode) {
+        const editor = current.editor;
+        if (editor && (!requiresElementEditor || typeof editor.getAttribute === "function") &&
+            (!requiresAttributeCollection || typeof editor.getAttributes === "function"))
+            return { target: current, editor };
+    }
+    return null;
+}
+
+/** Resolve an editor query or use the editor object already assigned by a renderer. */
+export async function initEditorQuery(receiver, { context = receiver?.ownerDocument, query } = {}) {
+    if (!receiver?.addEventListener) throw new TypeError("An editor query receiver is required.");
+    query ??= receiver.getAttribute("editor-query");
+    if (typeof query === "string" && !query.trim()) query = "";
+
+    const previousBinding = queryBindings.get(receiver);
+    const switchedToDirectEditor = previousBinding?.query && !query;
+    const assignedEditor = switchedToDirectEditor
+        ? receiver.editor || null : previousBinding?.sourceEditor || receiver.editor || null;
+    previousBinding?.disconnect({ preserveEditor: true });
     const controller = new AbortController();
-    let target = null, generation = 0;
-    const reportError = error => {
-        const EventConstructor = element.ownerDocument?.defaultView?.CustomEvent || CustomEvent;
-        element.dispatchEvent(new EventConstructor("editor-error", { bubbles: true, detail: { error } }));
-    };
-    const render = async nextTarget => {
-        if (typeof nextTarget?.editor?.getAttributes !== "function") return;
+    let target = null, queryTarget = null, currentEditor = null, sourceEditor = assignedEditor;
+    let clickGeneration = 0;
+    let ownsInputBinding = false;
+    const isInput = receiver.matches?.("input, textarea, select");
+    const setEditor = async (nextTarget, nextSourceEditor, {
+        render = true, forceInit = false, initializeInput = false
+    } = {}) => {
         target = nextTarget;
-        try {
-            // Pass the existing editor objects through unchanged.
-            await element.renderValue(target.editor.getAttributes());
-        } catch (error) { reportError(error); }
-    };
-    const resolve = async () => {
-        const currentGeneration = ++generation;
-        const nextTarget = await findTarget(context, query);
-        if (currentGeneration !== generation) return;
-        return render(nextTarget);
-    };
-    const document = context?.nodeType === 9 ? context
-        : context?.tagName === "IFRAME" ? context.contentDocument
-            : context?.ownerDocument || context?.document;
-    const refresh = event => {
-        const clicked = event?.target;
-        if (element === clicked || element.contains?.(clicked)) return;
-        if (clicked?.matches?.("input[editor-query], textarea[editor-query]")) return;
-        queueMicrotask(() => resolve().catch(reportError));
-    };
-    document?.addEventListener?.("click", refresh, { signal: controller.signal });
-    const onDetailsChange = event => {
-        if (!target || (event.target !== target && !event.target?.contains?.(target))) return;
-        render(target);
-    };
-    document?.addEventListener?.("editor-details-change", onDetailsChange, { signal: controller.signal });
-    const binding = {
-        element,
-        get target() { return target; },
-        refresh: resolve,
-        disconnect() {
-            controller.abort();
-            if (attributeRenderBindings.get(element) === binding) attributeRenderBindings.delete(element);
+        sourceEditor = nextSourceEditor;
+        const nextEditor = editorProjection(receiver, sourceEditor);
+        const changed = currentEditor !== nextEditor;
+        if ((changed || forceInit) && ownsInputBinding)
+            currentEditor?.uninit?.(receiver);
+        if (changed || forceInit) ownsInputBinding = false;
+        currentEditor = nextEditor;
+        receiver.editor = nextEditor;
+
+        if (!nextEditor) return;
+        if (receiver.hasAttribute?.("editor-attributes") || receiver.hasAttribute?.("editor-nodes")) {
+            if (typeof receiver.renderValue !== "function")
+                throw new TypeError("Editor attribute and node projections require renderValue().");
+            if (render) await receiver.renderValue(nextEditor);
+        } else if (isInput && (changed || forceInit) && typeof nextEditor.init === "function" &&
+            ((receiver.getAttribute?.("editor-attribute")?.trim() ||
+                receiver.getAttribute?.("editor-property")?.trim())
+                ? nextEditor.kind === "attribute"
+                : initializeInput && !receiver.hasAttribute?.("editor-attribute") &&
+                    !receiver.hasAttribute?.("editor-property"))) {
+            await nextEditor.init({ input: receiver, context, target });
+            ownsInputBinding = true;
         }
     };
-    attributeRenderBindings.set(element, binding);
+    let generation = 0;
+    const resolve = async () => {
+        const currentGeneration = ++generation;
+        const nextTarget = query ? await findTarget(context, query)
+            : sourceEditor?.element || sourceEditor?.parentNode?.liveNode || sourceEditor?.liveNode || null;
+        if (currentGeneration !== generation || controller.signal.aborted) return;
+        if (query) queryTarget = nextTarget;
+        const nextSourceEditor = query ? nextTarget?.editor || null : sourceEditor;
+        await setEditor(nextTarget, nextSourceEditor);
+    };
+    const refreshProjection = async () => {
+        if (controller.signal.aborted) return;
+        if (!target) return resolve();
+        await setEditor(target, query ? target.editor || sourceEditor : sourceEditor, { forceInit: true });
+    };
+    const holdClearedAttributeProjection = () => query && currentEditor?.kind === "attribute" &&
+        !receiver.getAttribute?.("editor-attribute")?.trim();
+    const binding = {
+        receiver,
+        query,
+        get sourceEditor() { return sourceEditor; },
+        get target() { return target; },
+        get queryTarget() { return queryTarget; },
+        get value() { return currentEditor; },
+        refresh: resolve,
+        refreshProjection,
+        disconnect({ preserveEditor = false } = {}) {
+            controller.abort();
+            clickGeneration++;
+            if (ownsInputBinding) currentEditor?.uninit?.(receiver);
+            if (!preserveEditor && receiver.editor === currentEditor) receiver.editor = null;
+            if (queryBindings.get(receiver) === binding) queryBindings.delete(receiver);
+        }
+    };
+    queryBindings.set(receiver, binding);
+    const document = context?.nodeType === 9 ? context
+        : context?.ownerDocument || context?.document || receiver.ownerDocument;
+    let clickHost = null;
+    const attachHostClick = () => {
+        if (!queryTarget || receiver.hasAttribute?.("editor-nodes") ||
+            !isEditorHost(queryTarget) || clickHost === queryTarget) return;
+        clickHost = queryTarget;
+        queryTarget.addEventListener("click", onHostClick, { signal: controller.signal });
+    };
+    const onHostClick = event => {
+        const selected = clickedEditorSource(receiver, event);
+        if (!selected) return;
+        const currentGeneration = ++clickGeneration;
+        const previousEditor = currentEditor;
+        Promise.resolve().then(() => typeof previousEditor?.uninit === "function"
+            ? previousEditor.uninit(receiver) : undefined).then(() => {
+            if (currentGeneration !== clickGeneration || controller.signal.aborted) return;
+            ownsInputBinding = false;
+            return setEditor(selected.target, selected.editor, {
+                forceInit: true,
+                initializeInput: true
+            });
+        }).catch(error => {
+            const EventConstructor = receiver.ownerDocument?.defaultView?.CustomEvent || globalThis.CustomEvent;
+            if (EventConstructor) receiver.dispatchEvent(new EventConstructor("editor-error", {
+                bubbles: true, detail: { error }
+            }));
+        });
+    };
+    const onEditorReady = event => {
+        if (!queryTarget || (event.target !== queryTarget && !queryTarget.contains?.(event.target))) return;
+        attachHostClick();
+        if (holdClearedAttributeProjection()) return;
+        setEditor(target, target?.editor || sourceEditor).catch(error => {
+            const EventConstructor = receiver.ownerDocument?.defaultView?.CustomEvent || globalThis.CustomEvent;
+            if (EventConstructor) receiver.dispatchEvent(new EventConstructor("editor-error", {
+                bubbles: true, detail: { error }
+            }));
+        });
+    };
+    const onDetailsChange = event => {
+        if (!target || (event.target !== queryTarget && event.target !== target &&
+            !queryTarget?.contains?.(event.target) && !event.target?.contains?.(target))) return;
+        if (holdClearedAttributeProjection()) return;
+        setEditor(target, query ? target?.editor || null : sourceEditor).catch(error => {
+            const EventConstructor = receiver.ownerDocument?.defaultView?.CustomEvent || globalThis.CustomEvent;
+            if (EventConstructor) receiver.dispatchEvent(new EventConstructor("editor-error", {
+                bubbles: true, detail: { error }
+            }));
+        });
+    };
+    document?.addEventListener?.("editor-ready", onEditorReady, { signal: controller.signal });
+    document?.addEventListener?.("editor-details-change", onDetailsChange, { signal: controller.signal });
     await resolve();
+    attachHostClick();
+
     return binding;
 }
 
-export function uninitEditorAttributes(element) {
-    const binding = attributeRenderBindings.get(element);
+export function uninitEditorQuery(receiver) {
+    const binding = queryBindings.get(receiver);
     if (!binding) return false;
     binding.disconnect();
     return true;
+}
+
+export function refreshEditorQuery(receiver) {
+    const binding = queryBindings.get(receiver);
+    if (binding) return binding.refreshProjection();
+    if (receiver?.hasAttribute?.("editor-query")) return initEditorQuery(receiver);
+    return Promise.resolve(false);
 }
 
 export function uninitEditorInput(input) {
@@ -435,5 +480,118 @@ export function uninitEditorInput(input) {
     binding.disconnect();
     return true;
 }
+
+function reportQueryObserverError(element, error) {
+    const EventConstructor = element.ownerDocument?.defaultView?.CustomEvent || globalThis.CustomEvent;
+    if (EventConstructor) element.dispatchEvent(new EventConstructor("editor-error", {
+        bubbles: true, detail: { error }
+    }));
+}
+
+function initializeObservedProjection(element) {
+    const query = element.getAttribute("editor-query");
+    const attribute = element.getAttribute("editor-attribute");
+    const property = element.getAttribute("editor-property");
+    const hasQuery = Boolean(query?.trim());
+    const hasDirectAttribute = Boolean(attribute?.trim()) ||
+        (element.editor?.kind === "attribute" && Boolean(property?.trim()));
+    if (!hasQuery && !(element.editor && hasDirectAttribute)) return;
+    initEditorQuery(element, {
+        context: element.ownerDocument,
+        query: hasQuery ? query : ""
+    }).catch(error => reportQueryObserverError(element, error));
+}
+
+function reinitializeObservedQuery(mutation) {
+    const element = mutation.target;
+    const query = element.getAttribute("editor-query");
+    if (!query?.trim()) return;
+    initEditorQuery(element, {
+        context: element.ownerDocument,
+        query
+    }).catch(error => reportQueryObserverError(element, error));
+}
+
+function refreshObservedProjection(mutation) {
+    const element = mutation.target;
+    if (!element.getAttribute("editor-query")?.trim()) return;
+    if (mutation.attributeName === "editor-attribute" &&
+        !element.getAttribute("editor-attribute")?.trim()) return;
+    if (mutation.attributeName === "editor-property" &&
+        (!element.getAttribute("editor-property")?.trim() ||
+            element.getAttribute("editor-attribute")?.trim().toLowerCase() !== "style")) return;
+    refreshEditorQuery(element).catch(error => reportQueryObserverError(element, error));
+}
+
+function uninitializeRemovedElement(mutation) {
+    if (mutation.move) return;
+    const element = mutation.target;
+    uninitEditorQuery(element);
+    uninitEditorInput(element);
+}
+
+observer.init([
+    {
+        name: "CoCreateEditorProjectionAddedNodes",
+        types: ["addedNodes"],
+        selector: "[editor-query], [editor-attribute], [editor-property]",
+        callback: mutation => initializeObservedProjection(mutation.target)
+    },
+    {
+        name: "CoCreateEditorBindingsRemovedNodes",
+        types: ["removedNodes"],
+        selector: "input, textarea, select, [editor-query], [editor-attribute], [editor-property], [editor-type]",
+        callback: mutation => uninitializeRemovedElement(mutation)
+    },
+    {
+        name: "CoCreateEditorQueryChanged",
+        types: ["attributes"],
+        attributeFilter: ["editor-query"],
+        selector: "[editor-query]",
+        callback: mutation => reinitializeObservedQuery(mutation)
+    },
+    {
+        name: "CoCreateEditorAttributeChanged",
+        types: ["attributes"],
+        attributeFilter: ["editor-attribute"],
+        selector: "[editor-query][editor-attribute]",
+        callback: mutation => refreshObservedProjection(mutation)
+    },
+    {
+        name: "CoCreateEditorPropertyChanged",
+        types: ["attributes"],
+        attributeFilter: ["editor-property"],
+        selector: "[editor-query][editor-property]",
+        callback: mutation => refreshObservedProjection(mutation)
+    },
+    {
+        name: "CoCreateEditorAttributesProjectionChanged",
+        types: ["attributes"],
+        attributeFilter: ["editor-attributes"],
+        selector: "[editor-query][editor-attributes]",
+        callback: mutation => refreshObservedProjection(mutation)
+    },
+    {
+        name: "CoCreateEditorAttributesProjectionRemoved",
+        types: ["attributes"],
+        attributeFilter: ["editor-attributes"],
+        selector: "[editor-query]:not([editor-attributes])",
+        callback: mutation => refreshObservedProjection(mutation)
+    },
+    {
+        name: "CoCreateEditorNodesProjectionChanged",
+        types: ["attributes"],
+        attributeFilter: ["editor-nodes"],
+        selector: "[editor-query][editor-nodes]",
+        callback: mutation => reinitializeObservedQuery(mutation)
+    },
+    {
+        name: "CoCreateEditorNodesProjectionRemoved",
+        types: ["attributes"],
+        attributeFilter: ["editor-nodes"],
+        selector: "[editor-query]:not([editor-nodes])",
+        callback: mutation => reinitializeObservedQuery(mutation)
+    }
+]);
 
 export default initEditorInput;

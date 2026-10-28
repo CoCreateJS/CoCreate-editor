@@ -6,7 +6,7 @@
 import "./index.css";
 import * as lengthEditorDetails from "./editors/utilities/lengthEditorDetails.js";
 
-const editorSelector = ":is([editor], [editor-language], [contenteditable], input[crdt='true'], textarea[crdt='true']):not([contenteditable='false']):not([editor-query]), input[editor-query], textarea[editor-query]";
+const editorSelector = ":is([editor], [editor-language], [contenteditable], input[crdt='true'], textarea[crdt='true']):not([contenteditable='false']):not([editor-query]), [editor-query]";
 const parserLoaders = {
     dom: () => import(/* webpackChunkName: "editor-parser-dom" */ "./editors/parsers/dom.js"),
     markdown: () => import(/* webpackChunkName: "editor-parser-markdown" */ "./editors/parsers/markdown.js"),
@@ -61,8 +61,8 @@ export const setSelection = (...args) => callRuntime("setSelection", args);
 export const textChange = (...args) => callRuntime("textChange", args);
 export const initEditorInput = (...args) => callRuntime("initEditorInput", args);
 export const uninitEditorInput = (...args) => callRuntime("uninitEditorInput", args);
-export const initEditorAttributes = (...args) => callRuntime("initEditorAttributes", args);
-export const uninitEditorAttributes = (...args) => callRuntime("uninitEditorAttributes", args);
+export const initEditorQuery = (...args) => callRuntime("initEditorQuery", args);
+export const uninitEditorQuery = (...args) => callRuntime("uninitEditorQuery", args);
 export const destroyEditor = (...args) => callRuntime("destroyEditor", args);
 export const sendPosition = (...args) => callRuntime("sendPosition", args);
 export const updateText = (...args) => callRuntime("updateText", args);
@@ -125,7 +125,7 @@ if (typeof document !== "undefined") {
 const editor = {
     init, initElements, initElement, createEditorCore, createCore, createEditorEvents,
     bindEditorInput, getSelection, setSelection, textChange,
-    initEditorInput, uninitEditorInput, initEditorAttributes, uninitEditorAttributes, destroyEditor,
+    initEditorInput, uninitEditorInput, initEditorQuery, uninitEditorQuery, destroyEditor,
     sendPosition, updateText, updateElement, loadEditor, loadParser, parseDOM,
     parseMarkdown, parseCode, autoLanguageDetection, createTextEditor, createDOMEditor,
     createMarkdownEditor, createCodeEditor, parseAndStoreEditorDetails,

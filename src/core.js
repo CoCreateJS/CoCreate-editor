@@ -9,10 +9,10 @@ import * as editorAPI from "./editors/index.js";
 import { createEditorEvents, bindEditorInput } from "./events.js";
 import { getSelection, setSelection } from "./selection.js";
 import { textChange } from "./textChange.js";
+import observer from "@cocreate/observer";
 const editorCore = createEditorCore();
 const editorSelector = ":is([editor], [editor-language], [contenteditable], input[crdt='true'], textarea[crdt='true']):not([contenteditable='false']):not([editor-query])";
-const inputBindingSelector = "input[editor-query], textarea[editor-query], [editor-attributes]";
-let observerReady;
+const editorProjectionSelector = "[editor-query], [editor-attribute], [editor-property]";
 let inputBindingPromise;
 let crdtPromise;
 const crdtMethods = ["getText", "replaceText", "updateText", "undoText", "redoText",
@@ -92,14 +92,14 @@ export async function uninitEditorInput(input) {
     return module.uninitEditorInput(input);
 }
 
-export async function initEditorAttributes(element, options) {
+export async function initEditorQuery(element, options) {
     const module = await loadInputBinding();
-    return module.initEditorAttributes(element, options);
+    return module.initEditorQuery(element, options);
 }
 
-export async function uninitEditorAttributes(element) {
+export async function uninitEditorQuery(element) {
     const module = await loadInputBinding();
-    return module.uninitEditorAttributes(element);
+    return module.uninitEditorQuery(element);
 }
 
 function emit(element, type, detail) {
@@ -188,74 +188,22 @@ export function initElements(elements) {
     return Promise.all([...elements].map(element => initElement(element)));
 }
 
-async function installObserver() {
-    if (observerReady) return observerReady;
-    observerReady = import("@cocreate/observer").then(({ default: observer }) => {
-        observer.init([
-            {
-                name: "CoCreateEditorAddedNodes",
-                types: ["addedNodes"],
-                selector: editorSelector,
-                callback: mutation => initElement(mutation.target)
-            },
-            {
-                name: "CoCreateEditorAttributes",
-                types: ["attributes"],
-                attributeFilter: ["editor", "editor-language", "contenteditable", "crdt",
-                    "realtime", "read", "save", "crud", "namespace", "room"],
-                selector: editorSelector,
-                callback: mutation => initElement(mutation.target, { force: true })
-            },
-            {
-                name: "CoCreateEditorInputBindings",
-                types: ["addedNodes", "attributes"],
-                attributeFilter: ["editor-query", "editor-attributes", "editor-type", "editor-attribute",
-                    "editor-attribute-part", "editor-property"],
-                selector: inputBindingSelector,
-                callback: mutation => {
-                    const input = mutation.target;
-                    loadInputBinding().then(module => input.hasAttribute("editor-attributes")
-                        ? module.initEditorAttributes(input, {
-                            context: input.ownerDocument,
-                            query: input.getAttribute("editor-query")
-                        })
-                        : module.initEditorInput(input, {
-                            context: input.ownerDocument,
-                            query: input.getAttribute("editor-query"),
-                            attribute: input.hasAttribute("editor-attribute") ? {
-                                name: input.getAttribute("editor-attribute"),
-                                part: input.getAttribute("editor-attribute-part") || "value"
-                            } : undefined
-                        })).catch(error => emit(input, "editor-error", { error }));
-                }
-            }
-        ]);
-    }).catch(error => {
-        observerReady = undefined;
-        throw error;
-    });
-    return observerReady;
-}
-
 export async function init(root = globalThis.document) {
     if (!root?.querySelectorAll) return [];
-    await installObserver();
     const elements = [...root.querySelectorAll(editorSelector)];
     const editors = await initElements(elements);
-    const inputs = [...root.querySelectorAll(inputBindingSelector)];
-    await Promise.all(inputs.map(input => input.hasAttribute("editor-attributes")
-        ? loadInputBinding().then(({ initEditorAttributes }) => initEditorAttributes(input, {
-            context: root,
-            query: input.getAttribute("editor-query")
-        }))
-        : initEditorInput(input, {
-            context: root,
-            query: input.getAttribute("editor-query"),
-            attribute: input.hasAttribute("editor-attribute") ? {
-                name: input.getAttribute("editor-attribute"),
-                part: input.getAttribute("editor-attribute-part") || "value"
-            } : undefined
-        })));
+    const receivers = [...root.querySelectorAll(editorProjectionSelector)].filter(element => {
+        const query = element.getAttribute("editor-query");
+        const attribute = element.getAttribute("editor-attribute");
+        const property = element.getAttribute("editor-property");
+        const hasDirectAttribute = Boolean(attribute?.trim()) ||
+            (element.editor?.kind === "attribute" && Boolean(property?.trim()));
+        return Boolean(query?.trim()) || Boolean(element.editor && hasDirectAttribute);
+    });
+    await Promise.all(receivers.map(element => initEditorQuery(element, {
+        context: root,
+        query: element.getAttribute("editor-query")
+    })));
     return editors;
 }
 
@@ -274,12 +222,29 @@ const editor = {
     bindEditorInput,
     initEditorInput,
     uninitEditorInput,
-    initEditorAttributes,
-    uninitEditorAttributes,
+    initEditorQuery,
+    uninitEditorQuery,
     getSelection,
     setSelection,
     textChange
 };
+
+observer.init([
+    {
+        name: "CoCreateEditorAddedNodes",
+        types: ["addedNodes"],
+        selector: editorSelector,
+        callback: mutation => initElement(mutation.target)
+    },
+    {
+        name: "CoCreateEditorAttributes",
+        types: ["attributes"],
+        attributeFilter: ["editor", "editor-language", "contenteditable", "crdt",
+            "realtime", "read", "save", "crud", "namespace", "room"],
+        selector: editorSelector,
+        callback: mutation => initElement(mutation.target, { force: true })
+    }
+]);
 
 export default editor;
 

@@ -127,31 +127,36 @@ rendered objects. Element editor objects expose `getAttribute(name)`,
 in source order. Attribute objects also support source-aware value updates and
 removal.
 
-An input or textarea can bind to the clicked element's text by default. Add
-`editor-attribute` to bind to a specific attribute instead:
+`editor-query` resolves the target and assigns its editor object to the receiver.
+An `editor-attribute` projection assigns one source-backed attribute detail and
+initializes an input binding. Collection projections pass the returned editor
+objects to the receiver's renderer:
+
+When the query resolves to an editor host, the receiver follows clicks from
+that host and switches to the clicked node's editor object. The `editor-nodes`
+projection returns the host's node list and disables click-follow behavior.
 
 ```html
-<!-- Edits the clicked element's first source-backed text segment -->
-<input editor-query="$clickedElement">
+<!-- Gives this input the queried element's editor API -->
+<input editor-query="#target">
 
-<!-- Edits the clicked element's class attribute -->
-<input editor-query="$clickedElement" editor-attribute="class">
+<!-- Binds this input to the queried element's class attribute -->
+<input editor-query="#target" editor-attribute="class">
 
-<!-- Edits the clicked element's inline color declaration -->
-<input editor-query="$clickedElement" editor-attribute="style" editor-property="color">
+<!-- Binds this input to one inline style property -->
+<input editor-query="#target" editor-attribute="style" editor-property="color">
 ```
 
-An element with `editor-attributes` can render the clicked element's existing
-attribute editor details. The binding passes those same source-backed objects
-to the renderer's `renderValue()` method and refreshes them after editor changes:
+`editor-attributes` and `editor-nodes` pass their source-backed objects directly
+to `renderValue()`:
 
 ```html
-<div editor-query="$clickedElement" editor-attributes></div>
+<div editor-query="#target" editor-attributes></div>
+<div editor-query="#editor" editor-nodes></div>
 ```
 
-For example, a meta description is an attribute, so bind it with
-`editor-attribute="content"`. The input binding module is loaded only when a
-query-bound control is initialized.
+The renderer can call each returned editor object's `init()` method when it
+creates a corresponding input control.
 
 ## Styling and integrations
 

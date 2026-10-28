@@ -112,32 +112,32 @@
                 <div id="editor-host"></div>
             </section>
             <section id="dom-inspector" class="panel" hidden>
-                <h2>Selected element</h2>
+                <h2>Queried element</h2>
                 <div class="inspector-fields">
                     <label for="dom-class-input">class attribute
                         <input id="dom-class-input" type="text" autocomplete="off" aria-describedby="dom-attribute-help"
-                            editor-attribute="class" disabled />
+                            editor-query="#dom-demo-heading" editor-attribute="class" disabled />
                     </label>
                     <label for="dom-title-input">title attribute
                         <input id="dom-title-input" type="text" autocomplete="off" aria-describedby="dom-attribute-help"
-                            editor-attribute="title" disabled />
+                            editor-query="#dom-demo-heading" editor-attribute="title" disabled />
                     </label>
-                    <small id="dom-attribute-help">Click an element in the source editor to bind its attributes.</small>
+                    <small id="dom-attribute-help">These controls are bound to the demo heading.</small>
                     <div id="dom-attribute-list" class="attribute-list" aria-live="polite"
-                        editor-query="$clickedElement" editor-attributes>
-                        <small>Selected element attributes will appear here.</small>
+                        editor-query="#dom-demo-heading" editor-attributes>
+                        <small>Heading attributes will appear here.</small>
                     </div>
                     <label for="dom-color-input">style: color
-                        <span class="style-control"><input id="dom-color-input" type="text" value="#6750d8" editor-query="$clickedElement"
+                        <span class="style-control"><input id="dom-color-input" type="text" value="#6750d8" editor-query="#dom-demo-heading"
                             editor-attribute="style" editor-property="color" disabled />
                             <button class="action" type="button" data-remove-style="color" disabled>Remove</button></span>
                     </label>
                     <label for="dom-padding-input">style: padding
-                        <span class="style-control"><input id="dom-padding-input" type="text" value="1rem" editor-query="$clickedElement"
+                        <span class="style-control"><input id="dom-padding-input" type="text" value="1rem" editor-query="#dom-demo-heading"
                             editor-attribute="style" editor-property="padding" disabled />
                             <button class="action" type="button" data-remove-style="padding" disabled>Remove</button></span>
                     </label>
-                    <small class="inspector-note">Style controls call setStyle(property, value) and removeStyle(property) on the selected style attribute.</small>
+                    <small class="inspector-note">Style controls call setStyle(property, value) and removeStyle(property) on the target style attribute.</small>
                 </div>
             </section>
             <section id="preview-panel" class="panel" hidden>
@@ -155,7 +155,7 @@
             const samples = {
                 text: "Edit plain text here.",
                 dom: [
-                    '<h3 class="title  primary"  data-id="heading"   title="Edit this heading" style="color: #6750d8; padding: 1rem">Edit this heading</h3>',
+                    '<h3 id="dom-demo-heading" class="title  primary"  data-id="heading"   title="Edit this heading" style="color: #6750d8; padding: 1rem">Edit this heading</h3>',
                     '<div class="broken"  data-note="missing closing angle"',
                     '<input class="field  compact"  type="text"   placeholder="Type  here" disabled>',
                     '<img class="preview  rounded"  src="example.png"   alt="Example  image">',
@@ -204,7 +204,6 @@
                 .filter(input => input !== domClassInput && input !== domTitleInput);
             const styleRemoveButtons = [...document.querySelectorAll('[data-remove-style]')];
             let activeEditor = null;
-            let selectedElement = null;
             let activeMode = 'editor';
             let activeType = null;
             let activeSurface = 'contenteditable';
@@ -238,6 +237,27 @@
                     return card;
                 }));
             };
+
+            const queryReceivers = [domClassInput, domTitleInput, attributeList, ...styleInputs];
+            async function bindDemoQueryReceivers() {
+                await Promise.all(queryReceivers.map(element =>
+                    CoCreate.editor.initEditorQuery(element)));
+                const target = document.querySelector('#dom-demo-heading');
+                domClassInput.disabled = !target?.hasAttribute('class');
+                domTitleInput.disabled = !target?.hasAttribute('title');
+                for (const input of styleInputs) input.disabled = !target;
+                const styleEditor = target?.editor?.getAttribute?.('style');
+                const styles = styleEditor?.getStyles?.() || [];
+                for (const button of styleRemoveButtons)
+                    button.disabled = !styles.some(item => item.property.toLowerCase() === button.dataset.removeStyle);
+            }
+
+            async function unbindDemoQueryReceivers() {
+                await Promise.all(queryReceivers.map(element =>
+                    CoCreate.editor.uninitEditorQuery(element)));
+                for (const input of [domClassInput, domTitleInput, ...styleInputs]) input.disabled = true;
+                for (const button of styleRemoveButtons) button.disabled = true;
+            }
 
             function loadMarkdownSample() {
                 markdownSamplePromise ||= fetch('../README.md')
@@ -511,12 +531,10 @@
                 previewPanel.hidden = true;
                 workspace.classList.toggle('single', type !== 'dom');
                 if (activeEditor) {
-                    activeEditor.editor?.uninit?.(domClassInput);
-                    activeEditor.editor?.uninit?.(domTitleInput);
+                    await unbindDemoQueryReceivers();
                     CoCreate.editor.destroyEditor(activeEditor);
                     activeEditor = null;
                 }
-                selectedElement = null;
                 status.classList.remove('error');
                 status.textContent = type === 'markdown' ? 'Loading the README example…'
                     : `Initializing ${type}${type === 'code' ? ` / ${activeLanguage}` : ''}…`;
@@ -549,29 +567,7 @@
                     formatDetails(initialDetails);
                     editor.addEventListener('editor-details-change', event =>
                         formatDetails(event.detail.result.editorDetails));
-                    if (type === 'dom') editor.addEventListener('click', event => {
-                        const target = event.target.nodeType === 1 ? event.target : event.target.parentElement;
-                        if (!target || target === editor || !editor.contains(target)) return;
-                        selectedElement = target;
-                        Promise.all([
-                            editor.editor.init({ input: domClassInput, target, context: editor,
-                                attribute: { name: 'class', part: 'value' } }),
-                            editor.editor.init({ input: domTitleInput, target, context: editor,
-                                attribute: { name: 'title', part: 'value' } })
-                        ]).then(() => {
-                            domClassInput.disabled = !target.hasAttribute('class');
-                            domTitleInput.disabled = !target.hasAttribute('title');
-                            for (const input of styleInputs) input.disabled = false;
-                            const styleEditor = target.editor?.getAttribute?.('style');
-                            const styles = styleEditor?.getStyles?.() || [];
-                            for (const button of styleRemoveButtons)
-                                button.disabled = !styles.some(item => item.property.toLowerCase() === button.dataset.removeStyle);
-                            status.textContent = `Editing attributes and styles on <${target.tagName.toLowerCase()}>`;
-                        }).catch(error => {
-                            status.textContent = `Attribute binding failed: ${error.message}`;
-                            status.classList.add('error');
-                        });
-                    });
+                    if (type === 'dom') await bindDemoQueryReceivers();
                     status.textContent = `${type}${type === 'code' ? ` / ${activeLanguage}` : ''} editor ready`;
                 } catch (error) {
                     status.textContent = `Initialization failed: ${error.message}`;
@@ -579,16 +575,13 @@
                 }
             }
 
-            for (const input of styleInputs) {
-                input.dataset.styleProperty = input.getAttribute('editor-property');
-            }
             for (const button of styleRemoveButtons) button.addEventListener('click', async () => {
-                const styleEditor = selectedElement?.editor?.getAttribute?.('style');
+                const styleEditor = document.querySelector('#dom-demo-heading')?.editor?.getAttribute?.('style');
                 if (!styleEditor) return;
                 try {
                     await styleEditor.removeStyle(button.dataset.removeStyle);
                     button.disabled = true;
-                    status.textContent = `Removed ${button.dataset.removeStyle} from the selected element`;
+                    status.textContent = `Removed ${button.dataset.removeStyle} from the demo heading`;
                 } catch (error) {
                     status.textContent = `Style removal failed: ${error.message}`;
                     status.classList.add('error');
@@ -617,15 +610,11 @@
                 previewPanel.hidden = false;
                 workspace.classList.remove('single');
                 previewTitle.textContent = type === 'markdown' ? 'Rendered Markdown' : 'Code preview';
+                await unbindDemoQueryReceivers();
                 if (activeEditor) {
-                    activeEditor.editor?.uninit?.(domClassInput);
-                    activeEditor.editor?.uninit?.(domTitleInput);
                     CoCreate.editor.destroyEditor(activeEditor);
                 }
                 activeEditor = null;
-                selectedElement = null;
-                for (const input of styleInputs) input.disabled = true;
-                for (const button of styleRemoveButtons) button.disabled = true;
                 status.classList.remove('error');
                 status.textContent = type === 'markdown' ? 'Loading the README example…'
                     : `Loading ${type}${type === 'code' ? ` / ${activeLanguage}` : ''} parser input…`;
@@ -648,18 +637,14 @@
                 await parseSource();
             }
 
-            function selectMode(mode) {
+            async function selectMode(mode) {
                 viewGeneration++;
                 clearTimeout(parseTimer);
                 if (activeEditor) {
-                    activeEditor.editor?.uninit?.(domClassInput);
-                    activeEditor.editor?.uninit?.(domTitleInput);
+                    await unbindDemoQueryReceivers();
                     CoCreate.editor.destroyEditor(activeEditor);
                     activeEditor = null;
                 }
-                selectedElement = null;
-                for (const input of styleInputs) input.disabled = true;
-                for (const button of styleRemoveButtons) button.disabled = true;
                 host.replaceChildren();
                 activeMode = mode;
                 activeType = null;
