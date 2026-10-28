@@ -1,6 +1,6 @@
 # Contributing to CoCreate Editor
 
-Contributions are welcome. Please open issues and merge requests in the [CoCreate Editor repository](https://gitlab.com/cocreatejs/CoCreate-editor).
+Contributions are welcome. Please open issues and pull requests in the [CoCreate Editor repository](https://github.com/CoCreateJS/CoCreate-editor).
 
 ## Development
 

@@ -43,13 +43,12 @@ export function updateDOMEditorDetails(details, update, { editor = details[0]?.e
                 return matches;
             });
             if (target?.liveNode) {
-                const root = editor?.editor?.liveNode || editor?.liveNode || editor;
                 if (completed.contentStart === completed.contentEnd)
-                    setDOMSelectionOverride(root, target.liveNode, completed.contentStart, 0);
+                    setDOMSelectionOverride(editor, target.liveNode, completed.contentStart, 0);
                 else if (target.liveNode.parentNode) {
                     const parent = target.liveNode.parentNode;
                     const index = [...parent.childNodes].indexOf(target.liveNode);
-                    setDOMSelectionOverride(root, parent, completed.end, index + 1);
+                    setDOMSelectionOverride(editor, parent, completed.end, index + 1);
                 }
             }
         }
@@ -61,6 +60,12 @@ export function renderEditor(element, source, details) {
     const result = renderDOM(element, { editorDetails: details });
     bindDOMSource(element, details);
     return result;
+}
+
+export function getInputElement(element) {
+    return element?.tagName === "IFRAME"
+        ? element.editor?.liveNode || element.contentDocument?.body
+        : element;
 }
 
 export { getDOMSource as getSource, getDOMSelection as getSelection,

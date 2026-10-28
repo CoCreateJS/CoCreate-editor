@@ -31,7 +31,7 @@ async function fixture(run, { source = 'alpha beta', tag = 'div', echo = false }
     try {
         await page.goto(origin);
         await page.evaluate(async ({ source, tag, echo }) => {
-            const { createEditorCore } = await import('/core.js');
+            const { createEditorCore } = await import('/editorCore.js');
             const selection = await import('/selection.js');
             window.editor = document.createElement(tag);
             editor.setAttribute('editor', 'text');

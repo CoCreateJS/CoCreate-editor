@@ -122,8 +122,10 @@ await paragraph.setAttribute('class', 'intro');
 Every update uses the positional `updateText({ start, length, value })`
 contract. The editor applies the resulting source change to the matching
 rendered objects. Element editor objects expose `getAttribute(name)`,
-`setAttribute(name, value)`, and `removeAttribute(name)`; attribute objects
-also support source-aware value updates and removal.
+`getAttributes()`, `setAttribute(name, value)`, and `removeAttribute(name)`;
+`getAttributes()` returns the element's source-backed attribute editor details
+in source order. Attribute objects also support source-aware value updates and
+removal.
 
 An input or textarea can bind to the clicked element's text by default. Add
 `editor-attribute` to bind to a specific attribute instead:
@@ -134,6 +136,17 @@ An input or textarea can bind to the clicked element's text by default. Add
 
 <!-- Edits the clicked element's class attribute -->
 <input editor-query="$clickedElement" editor-attribute="class">
+
+<!-- Edits the clicked element's inline color declaration -->
+<input editor-query="$clickedElement" editor-attribute="style" editor-property="color">
+```
+
+An element with `editor-attributes` can render the clicked element's existing
+attribute editor details. The binding passes those same source-backed objects
+to the renderer's `renderValue()` method and refreshes them after editor changes:
+
+```html
+<div editor-query="$clickedElement" editor-attributes></div>
 ```
 
 For example, a meta description is an attribute, so bind it with

@@ -25,9 +25,9 @@
             select, textarea, button { font: inherit; }
             select, .action { padding: .4rem .6rem; }
             .action { border: 1px solid #c8ced8; border-radius: .3rem; background: white; cursor: pointer; }
-            .workspace { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; align-items: stretch; }
-            .workspace.single { grid-template-columns: minmax(0, 1fr); }
-            .panel { min-width: 0; border: 1px solid #d7dce4; border-radius: .6rem; background: white; overflow: hidden; }
+            .workspace { display: flex; flex-wrap: wrap; gap: 1rem; align-items: stretch; }
+            .workspace.single { flex-direction: column; }
+            .panel { box-sizing: border-box; flex: 1 1 28rem; min-width: min(100%, 20rem); border: 1px solid #d7dce4; border-radius: .6rem; background: white; overflow: hidden; }
             .panel h2 { font-size: .95rem; margin: 0; padding: .7rem .9rem; border-bottom: 1px solid #e5e8ed; }
             .workspace:not(.single) .panel { display: flex; flex-direction: column; }
             .workspace:not(.single) #editor-host, .workspace:not(.single) #preview-content { flex: 1; min-height: 0; }
@@ -43,14 +43,21 @@
             #preview-content th, #preview-content td { border: 1px solid #d7dce4; padding: .35rem .55rem; text-align: left; }
             #preview-content th { background: #f5f7fa; }
             .details-console { margin-top: 1rem; }
-            #dom-inspector { margin-top: 1rem; padding: .8rem .9rem; }
-            #dom-inspector label { align-items: flex-start; flex-direction: column; gap: .25rem; }
-            #dom-inspector input { box-sizing: border-box; width: min(100%, 28rem); padding: .45rem .55rem; font: 14px ui-monospace, SFMono-Regular, Consolas, monospace; }
-            #dom-inspector small { color: #596273; }
+            #dom-inspector { box-sizing: border-box; flex: 0 0 300px; width: 300px; min-width: 300px; max-width: 300px; padding-bottom: .8rem; }
+            .inspector-fields { display: grid; gap: .8rem; padding: .8rem .9rem; }
+            .inspector-fields label { align-items: flex-start; flex-direction: column; gap: .25rem; }
+            .inspector-fields input { box-sizing: border-box; width: 100%; padding: .45rem .55rem; font: 14px ui-monospace, SFMono-Regular, Consolas, monospace; }
+            .inspector-fields small, .inspector-note { color: #596273; }
+            .attribute-list { display: grid; gap: .5rem; }
+            .attribute-card { padding: .55rem; border: 1px solid #e5e8ed; border-radius: .35rem; overflow-wrap: anywhere; }
+            .attribute-card strong { display: block; margin-bottom: .2rem; }
+            .attribute-card code { white-space: pre-wrap; }
+            .style-list { margin: .35rem 0 0; padding-left: 1.2rem; }
+            .style-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .35rem; width: 100%; }
+            .style-control button { padding: .35rem .5rem; }
             .details-console pre { min-height: 8rem; max-height: 20rem; background: #171923; color: #e2e5ef; }
             #status { min-height: 1.5rem; margin-left: auto; color: #596273; }
             .error { color: #a4262c !important; }
-            @media (max-width: 760px) { .workspace { grid-template-columns: 1fr; } }
         </style>
     </head>
     <body>
@@ -104,17 +111,40 @@
                 <h2 id="source-title">Editor source</h2>
                 <div id="editor-host"></div>
             </section>
+            <section id="dom-inspector" class="panel" hidden>
+                <h2>Selected element</h2>
+                <div class="inspector-fields">
+                    <label for="dom-class-input">class attribute
+                        <input id="dom-class-input" type="text" autocomplete="off" aria-describedby="dom-attribute-help"
+                            editor-attribute="class" disabled />
+                    </label>
+                    <label for="dom-title-input">title attribute
+                        <input id="dom-title-input" type="text" autocomplete="off" aria-describedby="dom-attribute-help"
+                            editor-attribute="title" disabled />
+                    </label>
+                    <small id="dom-attribute-help">Click an element in the source editor to bind its attributes.</small>
+                    <div id="dom-attribute-list" class="attribute-list" aria-live="polite"
+                        editor-query="$clickedElement" editor-attributes>
+                        <small>Selected element attributes will appear here.</small>
+                    </div>
+                    <label for="dom-color-input">style: color
+                        <span class="style-control"><input id="dom-color-input" type="text" value="#6750d8" editor-query="$clickedElement"
+                            editor-attribute="style" editor-property="color" disabled />
+                            <button class="action" type="button" data-remove-style="color" disabled>Remove</button></span>
+                    </label>
+                    <label for="dom-padding-input">style: padding
+                        <span class="style-control"><input id="dom-padding-input" type="text" value="1rem" editor-query="$clickedElement"
+                            editor-attribute="style" editor-property="padding" disabled />
+                            <button class="action" type="button" data-remove-style="padding" disabled>Remove</button></span>
+                    </label>
+                    <small class="inspector-note">Style controls call setStyle(property, value) and removeStyle(property) on the selected style attribute.</small>
+                </div>
+            </section>
             <section id="preview-panel" class="panel" hidden>
                 <h2 id="preview-title">Rendered preview</h2>
                 <div id="preview-content"></div>
             </section>
         </div>
-        <section id="dom-inspector" class="panel" hidden>
-            <label for="dom-class-input">Selected element class</label>
-            <input id="dom-class-input" type="text" autocomplete="off" aria-describedby="dom-class-help"
-                editor-attribute="class" disabled />
-            <small id="dom-class-help">Click an element in the DOM editor, then edit its class here.</small>
-        </section>
         <section class="panel details-console" hidden>
             <h2 id="details-title">Editor details</h2>
             <pre id="details-view">Waiting for initialization…</pre>
@@ -125,7 +155,7 @@
             const samples = {
                 text: "Edit plain text here.",
                 dom: [
-                    '<h3 class="title  primary"  data-id="heading"   title="Edit this heading">Edit this heading</h3>',
+                    '<h3 class="title  primary"  data-id="heading"   title="Edit this heading" style="color: #6750d8; padding: 1rem">Edit this heading</h3>',
                     '<div class="broken"  data-note="missing closing angle"',
                     '<input class="field  compact"  type="text"   placeholder="Type  here" disabled>',
                     '<img class="preview  rounded"  src="example.png"   alt="Example  image">',
@@ -168,7 +198,13 @@
             const workspaceElement = document.querySelector('#workspace');
             const domInspector = document.querySelector('#dom-inspector');
             const domClassInput = document.querySelector('#dom-class-input');
+            const domTitleInput = document.querySelector('#dom-title-input');
+            const attributeList = document.querySelector('#dom-attribute-list');
+            const styleInputs = [...document.querySelectorAll('[id^="dom-"][id$="-input"]')]
+                .filter(input => input !== domClassInput && input !== domTitleInput);
+            const styleRemoveButtons = [...document.querySelectorAll('[data-remove-style]')];
             let activeEditor = null;
+            let selectedElement = null;
             let activeMode = 'editor';
             let activeType = null;
             let activeSurface = 'contenteditable';
@@ -176,6 +212,32 @@
             let parseTimer;
             let markdownSamplePromise;
             let viewGeneration = 0;
+
+            attributeList.renderValue = attributes => {
+                attributeList.replaceChildren(...attributes.map(attribute => {
+                    const card = document.createElement('article');
+                    card.className = 'attribute-card';
+                    const name = document.createElement('strong');
+                    name.textContent = attribute.name;
+                    const value = document.createElement('code');
+                    value.textContent = attribute.liveNode?.value ?? attribute.value;
+                    card.append(name, value);
+                    if (attribute.name.toLowerCase() === 'style') {
+                        const styles = attribute.getStyles();
+                        if (styles.length) {
+                            const list = document.createElement('ul');
+                            list.className = 'style-list';
+                            for (const style of styles) {
+                                const item = document.createElement('li');
+                                item.textContent = `${style.property}: ${style.value}`;
+                                list.append(item);
+                            }
+                            card.append(list);
+                        }
+                    }
+                    return card;
+                }));
+            };
 
             function loadMarkdownSample() {
                 markdownSamplePromise ||= fetch('../README.md')
@@ -444,13 +506,17 @@
                 detailsConsole.hidden = false;
                 workspaceElement.hidden = false;
                 domInspector.hidden = type !== 'dom';
+                for (const input of styleInputs) input.disabled = true;
+                for (const button of styleRemoveButtons) button.disabled = true;
                 previewPanel.hidden = true;
-                workspace.classList.add('single');
+                workspace.classList.toggle('single', type !== 'dom');
                 if (activeEditor) {
                     activeEditor.editor?.uninit?.(domClassInput);
+                    activeEditor.editor?.uninit?.(domTitleInput);
                     CoCreate.editor.destroyEditor(activeEditor);
                     activeEditor = null;
                 }
+                selectedElement = null;
                 status.classList.remove('error');
                 status.textContent = type === 'markdown' ? 'Loading the README example…'
                     : `Initializing ${type}${type === 'code' ? ` / ${activeLanguage}` : ''}…`;
@@ -486,16 +552,21 @@
                     if (type === 'dom') editor.addEventListener('click', event => {
                         const target = event.target.nodeType === 1 ? event.target : event.target.parentElement;
                         if (!target || target === editor || !editor.contains(target)) return;
-                        editor.editor.init({
-                            input: domClassInput,
-                            target,
-                            context: editor,
-                            attribute: { name: 'class', part: 'value' }
-                        }).then(() => {
+                        selectedElement = target;
+                        Promise.all([
+                            editor.editor.init({ input: domClassInput, target, context: editor,
+                                attribute: { name: 'class', part: 'value' } }),
+                            editor.editor.init({ input: domTitleInput, target, context: editor,
+                                attribute: { name: 'title', part: 'value' } })
+                        ]).then(() => {
                             domClassInput.disabled = !target.hasAttribute('class');
-                            status.textContent = target.hasAttribute('class')
-                                ? `Editing class on <${target.tagName.toLowerCase()}>`
-                                : `<${target.tagName.toLowerCase()}> has no class attribute`;
+                            domTitleInput.disabled = !target.hasAttribute('title');
+                            for (const input of styleInputs) input.disabled = false;
+                            const styleEditor = target.editor?.getAttribute?.('style');
+                            const styles = styleEditor?.getStyles?.() || [];
+                            for (const button of styleRemoveButtons)
+                                button.disabled = !styles.some(item => item.property.toLowerCase() === button.dataset.removeStyle);
+                            status.textContent = `Editing attributes and styles on <${target.tagName.toLowerCase()}>`;
                         }).catch(error => {
                             status.textContent = `Attribute binding failed: ${error.message}`;
                             status.classList.add('error');
@@ -507,6 +578,22 @@
                     status.classList.add('error');
                 }
             }
+
+            for (const input of styleInputs) {
+                input.dataset.styleProperty = input.getAttribute('editor-property');
+            }
+            for (const button of styleRemoveButtons) button.addEventListener('click', async () => {
+                const styleEditor = selectedElement?.editor?.getAttribute?.('style');
+                if (!styleEditor) return;
+                try {
+                    await styleEditor.removeStyle(button.dataset.removeStyle);
+                    button.disabled = true;
+                    status.textContent = `Removed ${button.dataset.removeStyle} from the selected element`;
+                } catch (error) {
+                    status.textContent = `Style removal failed: ${error.message}`;
+                    status.classList.add('error');
+                }
+            });
 
             async function selectParser(type) {
                 const generation = ++viewGeneration;
@@ -526,11 +613,19 @@
                 detailsTitle.textContent = 'Parser details';
                 detailsConsole.hidden = true;
                 workspaceElement.hidden = false;
+                domInspector.hidden = true;
                 previewPanel.hidden = false;
                 workspace.classList.remove('single');
                 previewTitle.textContent = type === 'markdown' ? 'Rendered Markdown' : 'Code preview';
-                if (activeEditor) CoCreate.editor.destroyEditor(activeEditor);
+                if (activeEditor) {
+                    activeEditor.editor?.uninit?.(domClassInput);
+                    activeEditor.editor?.uninit?.(domTitleInput);
+                    CoCreate.editor.destroyEditor(activeEditor);
+                }
                 activeEditor = null;
+                selectedElement = null;
+                for (const input of styleInputs) input.disabled = true;
+                for (const button of styleRemoveButtons) button.disabled = true;
                 status.classList.remove('error');
                 status.textContent = type === 'markdown' ? 'Loading the README example…'
                     : `Loading ${type}${type === 'code' ? ` / ${activeLanguage}` : ''} parser input…`;
@@ -558,9 +653,13 @@
                 clearTimeout(parseTimer);
                 if (activeEditor) {
                     activeEditor.editor?.uninit?.(domClassInput);
+                    activeEditor.editor?.uninit?.(domTitleInput);
                     CoCreate.editor.destroyEditor(activeEditor);
                     activeEditor = null;
                 }
+                selectedElement = null;
+                for (const input of styleInputs) input.disabled = true;
+                for (const button of styleRemoveButtons) button.disabled = true;
                 host.replaceChildren();
                 activeMode = mode;
                 activeType = null;

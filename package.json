@@ -16,7 +16,7 @@
     "html",
     "markdown"
   ],
-  "browser": "./src/loader.js",
+  "browser": "./src/index.js",
   "files": [
     "src",
     "dist"
@@ -51,9 +51,9 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://gitlab.com/cocreatejs/CoCreate-editor.git"
+    "url": "git+https://github.com/CoCreateJS/CoCreate-editor.git"
   },
   "bugs": {
-    "url": "https://gitlab.com/cocreatejs/CoCreate-editor/-/issues"
+    "url": "https://github.com/CoCreateJS/CoCreate-editor/issues"
   }
 }

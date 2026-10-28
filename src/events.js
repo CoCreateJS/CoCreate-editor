@@ -51,12 +51,20 @@ export function bindEditorInput(element, { onUpdate, onSelection, readValue, map
         const change = textChange(previous, next, sourceSelection);
         previous = next;
         selectionBeforeInput = null;
-        Promise.resolve(onUpdate({ ...change, string: next })).catch(error => {
+        let update;
+        try {
+            update = onUpdate({ ...change, string: next });
+        } catch (error) {
+            element.dispatchEvent(new CustomEvent("editor-error", {
+                bubbles: true, detail: { error }
+            }));
+            return;
+        }
+        Promise.resolve(update).then(() => onSelection?.(readSelection())).catch(error => {
             element.dispatchEvent(new CustomEvent("editor-error", {
                 bubbles: true, detail: { error }
             }));
         });
-        onSelection?.(readSelection());
     };
     const selection = () => onSelection?.(readSelection());
     element.addEventListener("keydown", keydown, options);

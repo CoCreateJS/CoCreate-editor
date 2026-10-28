@@ -230,6 +230,7 @@ test("code language detection recognizes common syntax and falls back from unkno
 });
 
 test("editor core routes plain text updates without creating editor details", async () => {
+    const { createEditorCore } = await import("../src/editorCore.js");
     const operations = [];
     class TextSurface extends EventTarget {
         constructor() {
@@ -243,7 +244,7 @@ test("editor core routes plain text updates without creating editor details", as
         hasAttribute() { return false; }
     }
     const element = new TextSurface();
-    const core = editorAPI.createEditorCore({ updateText: operation => operations.push(operation), eventTarget: null });
+    const core = createEditorCore({ updateText: operation => operations.push(operation), eventTarget: null });
     const details = await core.initEditor(element, { mode: "text" });
     assert.equal(details, undefined);
 
@@ -265,6 +266,7 @@ test("editor core routes plain text updates without creating editor details", as
 });
 
 test("local text edits preserve the native surface without editor details", async () => {
+    const { createEditorCore } = await import("../src/editorCore.js");
     class TextSurface extends EventTarget {
         constructor() {
             super();
@@ -277,7 +279,7 @@ test("local text edits preserve the native surface without editor details", asyn
         setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; }
     }
     const element = new TextSurface();
-    const core = editorAPI.createEditorCore({ eventTarget: null });
+    const core = createEditorCore({ eventTarget: null });
     const details = await core.initEditor(element, { mode: "text" });
     element.selectionStart = element.selectionEnd = 2;
     element.value = "aXbc";

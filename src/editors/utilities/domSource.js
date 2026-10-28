@@ -6,6 +6,9 @@ const breakPlaceholder = "data-cocreate-dom-break";
 const sourceOf = details => details.map(detail => detail.value).join("");
 const fingerprint = selection => [selection.anchorNode, selection.anchorOffset, selection.focusNode, selection.focusOffset];
 const matches = (a, b) => a?.every((value, index) => value === b[index]);
+const liveRoot = element => element?.tagName === "IFRAME"
+    ? element.editor?.liveNode || element.contentDocument?.body
+    : element;
 
 function sourceOffset(detail, offset) {
     let difference = 0;
@@ -30,11 +33,12 @@ function renderedOffset(detail, offset) {
 export function bindDOMSource(element, details) {
     const state = states.get(element) || {};
     state.details = details;
-    const Observer = element.ownerDocument?.defaultView?.MutationObserver;
+    const root = liveRoot(element);
+    const Observer = root?.ownerDocument?.defaultView?.MutationObserver;
     if (!state.observer && Observer) {
         state.mutations = [];
         state.observer = new Observer(records => { for (const record of records) state.mutations.push(record); });
-        state.observer.observe(element, { childList: true, characterData: true, subtree: true });
+        state.observer.observe(root, { childList: true, characterData: true, subtree: true });
     }
     state.observer?.takeRecords();
     if (state.mutations) state.mutations.length = 0;
@@ -61,7 +65,7 @@ function localText(detail) {
 }
 
 function remember(element, source) {
-    const state = states.get(element), selection = element.ownerDocument?.getSelection();
+    const state = states.get(element), selection = liveRoot(element)?.ownerDocument?.getSelection();
     if (state && selection?.rangeCount) state.selection = { points: fingerprint(selection), source };
 }
 
@@ -78,24 +82,26 @@ export function setDOMSelectionOverride(element, node, sourceOffset, nodeOffset)
 
 /** Normalize Enter to a source newline instead of browser-generated block markup. */
 export function beforeDOMInput(element, event, selection) {
+    const root = liveRoot(element);
     if (!event?.cancelable || event.defaultPrevented || event.isComposing ||
-        (event.target !== element && !element.contains(event.target)) || !selection ||
+        (event.target !== root && !root?.contains(event.target)) || !selection ||
         !["insertParagraph", "insertLineBreak"].includes(event.inputType)) return;
     event.preventDefault();
-    const view = element.ownerDocument?.defaultView;
+    const view = root?.ownerDocument?.defaultView;
     const input = view?.InputEvent
         ? new view.InputEvent("input", { bubbles: true, inputType: event.inputType, data: "<br>" })
         : new (view?.Event || globalThis.Event)("input", { bubbles: true });
     if (!("inputType" in input)) Object.defineProperty(input, "inputType", { value: event.inputType });
-    element.dispatchEvent(input);
+    root.dispatchEvent(input);
 }
 
 /** Read source characters, preserving tag syntax and character references. */
 export function getDOMSource(element, event, selection) {
+    const root = liveRoot(element);
     const state = states.get(element);
-    if (!state) return element.innerHTML || "";
+    if (!state) return root?.innerHTML || "";
     const before = sourceOf(state.details);
-    if (event?.target && event.target !== element) return before;
+    if (event?.target && event.target !== root && !root?.contains(event.target)) return before;
     let value;
     const type = event?.inputType || "";
     if (selection) {
@@ -107,7 +113,7 @@ export function getDOMSource(element, event, selection) {
         const caret = selection.start + value.length;
         remember(element, { start: caret, end: caret, anchor: caret, head: caret });
         // Native input can create a Text node that has no detail yet (e.g. an empty editor).
-        const native = element.ownerDocument.getSelection();
+        const native = root.ownerDocument.getSelection();
         state.nativeNodes = [];
         state.nativeText = new Set();
         const mutations = [...(state.mutations || []), ...(state.observer?.takeRecords() || [])];
@@ -118,12 +124,12 @@ export function getDOMSource(element, event, selection) {
                 if (detail?.kind === "text" && !detail.sourceOnly) state.nativeText.add(detail);
             }
             for (const node of record.addedNodes || [])
-                if (!getEditorForNode(node) && element.contains(node) && !state.nativeNodes.includes(node)) state.nativeNodes.push(node);
+                if (!getEditorForNode(node) && root.contains(node) && !state.nativeNodes.includes(node)) state.nativeNodes.push(node);
         }
         for (let node of [native?.anchorNode, native?.focusNode]) {
             let extra = null;
-            while (node && node !== element && !getEditorForNode(node)) { extra = node; node = node.parentNode; }
-            if (extra && element.contains(extra) && !state.nativeNodes.includes(extra)) state.nativeNodes.push(extra);
+            while (node && node !== root && !getEditorForNode(node)) { extra = node; node = node.parentNode; }
+            if (extra && root.contains(extra) && !state.nativeNodes.includes(extra)) state.nativeNodes.push(extra);
         }
         return before.slice(0, selection.start) + value + before.slice(selection.end);
     }
@@ -137,7 +143,7 @@ export function getDOMSource(element, event, selection) {
         for (const record of mutations) {
             if (record.type !== "childList") continue;
             for (const node of record.addedNodes)
-                if (element.contains(node) && !added.includes(node)) added.push(node);
+                if (root.contains(node) && !added.includes(node)) added.push(node);
         }
         const roots = added.filter(node => !added.some(other => other !== node && other.contains(node)))
             .sort((a, b) => a.compareDocumentPosition(b) & 4 ? -1 : 1);
@@ -147,11 +153,11 @@ export function getDOMSource(element, event, selection) {
             if (inserted) {
                 state.nativeNodes = roots;
                 state.nativeText = new Set();
-                const native = element.ownerDocument.getSelection();
+                const native = root.ownerDocument.getSelection();
                 let insertedOffset = 0, foundCaret = false;
                 for (const node of roots) {
                     if (node === native?.anchorNode) {
-                        const range = element.ownerDocument.createRange();
+                        const range = root.ownerDocument.createRange();
                         range.selectNodeContents(node);
                         range.setEnd(native.anchorNode, native.anchorOffset);
                         insertedOffset += range.toString().length;
@@ -159,7 +165,7 @@ export function getDOMSource(element, event, selection) {
                         break;
                     }
                     if (node.contains?.(native?.anchorNode)) {
-                        const range = element.ownerDocument.createRange();
+                        const range = root.ownerDocument.createRange();
                         range.selectNodeContents(node);
                         range.setEnd(native.anchorNode, native.anchorOffset);
                         insertedOffset += range.toString().length;
@@ -202,10 +208,11 @@ function endOf(detail, details) {
 }
 
 export function getDOMSelection(element, range) {
-    const state = states.get(element), native = element.ownerDocument?.getSelection();
+    const root = liveRoot(element);
+    const state = states.get(element), native = root?.ownerDocument?.getSelection();
     if (!state || !native) return null;
-    if (!native.rangeCount) return element.ownerDocument.activeElement === element ? state.selection?.source || null : null;
-    if (!element.contains(native.anchorNode) || !element.contains(native.focusNode)) return null;
+    if (!native.rangeCount) return root.ownerDocument.activeElement === root ? state.selection?.source || null : null;
+    if (!root.contains(native.anchorNode) || !root.contains(native.focusNode)) return null;
     const collapsed = !range || (range.startContainer === range.endContainer && range.startOffset === range.endOffset);
     if (collapsed && state.selection && matches(state.selection.points, fingerprint(native))) return state.selection.source;
     const point = (node, offset) => {
@@ -230,12 +237,13 @@ export function getDOMSelection(element, range) {
 }
 
 export function setDOMSelection(element, source) {
-    const state = states.get(element), native = element.ownerDocument?.getSelection();
+    const root = liveRoot(element);
+    const state = states.get(element), native = root?.ownerDocument?.getSelection();
     if (!state || !native) return false;
     if (state.selectionOverride) {
         const { node, sourceOffset, nodeOffset } = state.selectionOverride;
         state.selectionOverride = null;
-        if (element.contains(node)) {
+        if (root.contains(node)) {
             const offset = Number.isInteger(nodeOffset) ? nodeOffset : node.childNodes.length;
             native.setBaseAndExtent(node, offset, node, offset);
             remember(element, { start: sourceOffset, end: sourceOffset,
@@ -244,11 +252,11 @@ export function setDOMSelection(element, source) {
         }
     }
     const point = offset => {
-        const terminal = element.lastChild;
+        const terminal = root.lastChild;
         if (offset === sourceOf(state.details).length &&
             terminal?.hasAttribute?.(breakPlaceholder) &&
             Number(terminal.getAttribute(breakPlaceholder)) === offset)
-            return [element, element.childNodes.length];
+            return [root, root.childNodes.length];
         let position = 0, previous = null, empty = null;
         for (const detail of state.details) {
             const node = detail.liveNode;
@@ -259,7 +267,7 @@ export function setDOMSelection(element, source) {
             }
             if (detail.kind === "element" && position <= offset && node?.isContentEditable && !node.childNodes.length)
                 empty = node;
-            if (!detail.sourceOnly && node?.nodeType === 3 && element.contains(node)) {
+            if (!detail.sourceOnly && node?.nodeType === 3 && root.contains(node)) {
                 if (offset === position + detail.length && /[\r\n]$/.test(detail.value) &&
                     node.nextSibling?.hasAttribute?.(breakPlaceholder)) {
                     const siblings = [...node.parentNode.childNodes];
@@ -273,7 +281,7 @@ export function setDOMSelection(element, source) {
             }
             position += detail.length;
         }
-        return empty ? [empty, 0] : previous || [element, 0];
+        return empty ? [empty, 0] : previous || [root, 0];
     };
     const [anchor, anchorOffset] = point(source.anchor ?? source.start);
     const [focus, focusOffset] = point(source.head ?? source.end);

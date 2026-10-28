@@ -33,7 +33,7 @@ async function fixture(source, run) {
     try {
         await page.goto(origin);
         await page.evaluate(async source => {
-            const { createEditorCore } = await import('/core.js');
+            const { createEditorCore } = await import('/editorCore.js');
             const dom = await import('/editors/dom.js');
             const { planDOMEdit } = await import('/editors/utilities/planDOMEdit.js');
             const { applyEditorDetailsPlan } = await import('/editors/utilities/updateEditorDetails.js');

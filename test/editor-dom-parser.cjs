@@ -1,9 +1,9 @@
 const { test, before } = require('node:test');
 const assert = require('node:assert/strict');
-let parseDOM, renderEditor;
+let parseDOM, createEditorsFromRecords;
 before(async () => {
     ({ parseDOM } = await import('../src/editors/parsers/dom.js'));
-    ({ renderEditor } = await import('../src/editors/utilities/renderEditor.js'));
+    ({ createEditorsFromRecords } = await import('../src/editors/utilities/createEditor.js'));
 });
 
 function assertSource(details, source) {
@@ -112,6 +112,17 @@ test('DOM keeps quoted attribute contents whole and distinguishes boolean and un
     assert.equal(unquoted.find(detail => detail.kind === 'attribute').value, 'data-x=one/');
     assert.equal(unquoted.at(-1).value, '>');
     assert.equal(unquoted[0].selfClosing, false);
+});
+
+test('style attribute details expose parsed declarations without changing the DOM parser records', () => {
+    const details = createEditorsFromRecords(parseDOM('<div style="color: red; background: url(https://x/y;a); --tone: \'a;b\' !important"></div>'), null, { dom: true });
+    const style = details.find(detail => detail.kind === 'attribute' && detail.name === 'style');
+    assert.deepEqual(style.getStyles(), [
+        { property: 'color', value: 'red' },
+        { property: 'background', value: 'url(https://x/y;a)' },
+        { property: '--tone', value: "'a;b' !important" }
+    ]);
+    assert.equal(style.value, 'style="color: red; background: url(https://x/y;a); --tone: \'a;b\' !important"');
 });
 
 test('DOM preserves raw text and comment boundaries without parsing their inner markup', () => {

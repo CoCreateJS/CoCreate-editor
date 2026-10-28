@@ -31,7 +31,7 @@ async function fixture(run, source = '') {
     try {
         await page.goto(origin);
         await page.evaluate(async source => {
-            const { createEditorCore } = await import('/core.js');
+            const { createEditorCore } = await import('/editorCore.js');
             const markdown = await import('/editors/markdown.js');
             window.core = createEditorCore({ eventTarget: window });
             window.editor = document.createElement('div');

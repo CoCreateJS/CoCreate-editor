@@ -42,7 +42,7 @@ function elementNode(document, tag) {
     return template.content.firstChild;
 }
 
-function renderRoot(root, details, property, plan) {
+function renderRoot(root, details, property, plan, documentRootDetail = null) {
     const document = root.ownerDocument;
     const previous = states.get(root);
     const operations = { added: [], removed: [], updated: [], moved: [] };
@@ -83,13 +83,24 @@ function renderRoot(root, details, property, plan) {
         const nodeDocument = parent.ownerDocument || document;
         let node = detail[property];
         if (detail.kind === "element") {
+            // A complete iframe source includes its own <html> record. Bind
+            // that record to the browsing context's existing documentElement
+            // instead of inserting a second <html> inside the render host.
+            if (detail === documentRootDetail) node = root;
+            // Keep the iframe's native head/body nodes when the source has
+            // those top-level children, so document accessors and listeners
+            // continue to refer to the reconciled nodes.
+            else if (!node && detail.parentNode === documentRootDetail &&
+                detail.tag === "head" && document.head?.parentNode === root) node = document.head;
+            else if (!node && detail.parentNode === documentRootDetail &&
+                detail.tag === "body" && document.body?.parentNode === root) node = document.body;
             if (node?.nodeType !== 1 || node.localName !== detail.tag) {
                 node = elementNode(nodeDocument, detail.tag);
                 operations.added.push(node);
                 addedNodes.add(node);
             }
             bind(detail, node, property);
-            append(parent, node);
+            if (node !== root) append(parent, node);
             children.set(childContainer(node), []);
             attributes.set(node, new Map());
         } else if (detail.kind === "text" || detail.kind === "comment") {
@@ -194,10 +205,20 @@ export function renderDOM(editor, plan) {
     const live = editor?.editor?.liveNode || editor?.editor?.element || editor?.liveNode ||
         (editor?.nodeType ? editor : null);
     const detached = editor?.editor?.detachedNode || editor?.detachedNode;
+    const documentRootDetail = editorDetails.find(detail =>
+        detail.kind === "element" && detail.tag === "html" && !detail.parentNode) || null;
     const result = {};
-    if (live?.ownerDocument) result.liveNode = renderRoot(live, editorDetails, "liveNode", plan);
-    if (detached?.ownerDocument && detached !== live)
-        result.detachedNode = renderRoot(detached, editorDetails, "detachedNode", plan);
+    if (live?.ownerDocument) {
+        const root = documentRootDetail && live.ownerDocument.documentElement
+            ? live.ownerDocument.documentElement : live;
+        result.liveNode = renderRoot(root, editorDetails, "liveNode", plan, documentRootDetail);
+    }
+    if (detached?.ownerDocument && detached !== live) {
+        const root = documentRootDetail && detached.ownerDocument.documentElement
+            ? detached.ownerDocument.documentElement : detached;
+        result.detachedNode = renderRoot(root, editorDetails, "detachedNode", plan,
+            documentRootDetail ? documentRootDetail : null);
+    }
     return result;
 }
 

@@ -1,3 +1,5 @@
+import { isVoidElement } from "../parsers/voidElements.js";
+
 /**
  * Constructor for one editor object in the experimental length-only model.
  *
@@ -21,6 +23,55 @@ function loadInputBinding() {
 export const getEditorForNode = node => node?.editor || editorsByNode.get(node);
 
 const validAttributeName = /^[A-Za-z_:][\w:.-]*$/;
+const validStyleProperty = /^(?:--[\w-]+|-?[A-Za-z][\w-]*)$/;
+
+// Split inline CSS only at delimiters outside strings, comments, and functions.
+function styleParts(source) {
+    const parts = [];
+    let start = 0, quote = "", depth = 0, comment = false;
+    for (let index = 0; index < source.length; index++) {
+        const character = source[index], next = source[index + 1];
+        if (comment) {
+            if (character === "*" && next === "/") { comment = false; index++; }
+        } else if (quote) {
+            if (character === "\\") index++;
+            else if (character === quote) quote = "";
+        } else if (character === "/" && next === "*") { comment = true; index++; }
+        else if (character === "\\\"" || character === "'") quote = character;
+        else if (character === "(") depth++;
+        else if (character === ")") depth = Math.max(0, depth - 1);
+        else if (character === ";" && depth === 0) { parts.push({ start, end: index, delimiter: index + 1 }); start = index + 1; }
+    }
+    parts.push({ start, end: source.length, delimiter: source.length });
+    return parts;
+}
+
+function styleValueRange(attributeSource) {
+    const match = /^(\s*style\s*=\s*)(["'])([\s\S]*?)\2(\s*)$/i.exec(attributeSource);
+    if (match) return { start: match[1].length + 1, end: match[1].length + 1 + match[3].length };
+    const unquoted = /^(\s*style\s*=\s*)([^\s>]*)(\s*)$/i.exec(attributeSource);
+    if (unquoted) return { start: unquoted[1].length, end: unquoted[1].length + unquoted[2].length };
+    if (/^\s*style\s*$/i.test(attributeSource)) return { start: attributeSource.length, end: attributeSource.length };
+    throw new TypeError("Style operations require a complete style attribute detail.");
+}
+
+function styleDeclarations(source) {
+    return styleParts(source).map(part => {
+        let quote = "", depth = 0, comment = false, colon = -1;
+        for (let index = part.start; index < part.end; index++) {
+            const character = source[index], next = source[index + 1];
+            if (comment) { if (character === "*" && next === "/") { comment = false; index++; } }
+            else if (quote) { if (character === "\\") index++; else if (character === quote) quote = ""; }
+            else if (character === "/" && next === "*") { comment = true; index++; }
+            else if (character === "\\\"" || character === "'") quote = character;
+            else if (character === "(") depth++;
+            else if (character === ")") depth = Math.max(0, depth - 1);
+            else if (character === ":" && depth === 0) { colon = index; break; }
+        }
+        if (colon < 0) return { ...part, property: "" };
+        return { ...part, colon, property: source.slice(part.start, colon).trim() };
+    });
+}
 
 function submitUpdate(editor, update) {
     const root = editor.element?.editor || editor.element;
@@ -83,12 +134,108 @@ Object.assign(editorPrototype, {
     setValue(value) {
         return this.updateText({ start: 0, length: this.length, value });
     },
+    getStyles() {
+        if (this.kind !== "attribute" || this.name?.toLowerCase() !== "style")
+            throw new TypeError("Style operations are available on style attribute editors.");
+        const range = styleValueRange(this.value);
+        const source = this.value.slice(range.start, range.end);
+        return styleDeclarations(source).filter(item => item.property).map(item => ({
+            property: item.property,
+            value: source.slice(item.colon + 1, item.end).trim()
+        }));
+    },
+    setStyle(property, value) {
+        if (this.kind !== "attribute" || this.name?.toLowerCase() !== "style")
+            throw new TypeError("Style operations are available on style attribute editors.");
+        if (typeof property !== "string" || !validStyleProperty.test(property.trim()))
+            throw new TypeError("A valid CSS property name is required.");
+        if (value == null) return this.removeStyle(property);
+        if (typeof value !== "string" && typeof value !== "number")
+            throw new TypeError("A CSS property value must be a string or number.");
+        const range = styleValueRange(this.value), source = this.value.slice(range.start, range.end);
+        const declarations = styleDeclarations(source);
+        const existing = declarations.filter(item => item.property.toLowerCase() === property.trim().toLowerCase());
+        if (existing.length) {
+            const item = existing.at(-1), raw = source.slice(item.colon + 1, item.end);
+            const leadingLength = /^\s*/.exec(raw)[0].length;
+            const importantStart = /\s*!important\s*$/i.exec(raw)?.index ?? raw.length;
+            let valueStart = item.colon + 1 + leadingLength;
+            let valueEnd = item.colon + 1 + importantStart;
+            while (valueEnd > valueStart && /\s/.test(source[valueEnd - 1])) valueEnd--;
+            return this.updateText({ start: range.start + valueStart,
+                length: valueEnd - valueStart, value: String(value) });
+        }
+
+        const separator = source.trim() ? (source.trimEnd().endsWith(";") ? " " : "; ") : "";
+        const insertion = `${separator}${property.trim()}: ${String(value)}`;
+        return this.updateText({ start: range.end, length: 0, value: insertion });
+    },
+    async removeStyle(property) {
+        if (this.kind !== "attribute" || this.name?.toLowerCase() !== "style")
+            throw new TypeError("Style operations are available on style attribute editors.");
+        if (typeof property !== "string" || !validStyleProperty.test(property.trim()))
+            throw new TypeError("A valid CSS property name is required.");
+        const range = styleValueRange(this.value), source = this.value.slice(range.start, range.end);
+        const declarations = styleDeclarations(source).filter(item =>
+            item.property.toLowerCase() === property.trim().toLowerCase());
+        if (!declarations.length) return;
+        let result;
+        for (const item of declarations.reverse()) {
+            let start = item.start, end = item.delimiter;
+            if (end === source.length && start > 0 && source[start - 1] === ";") start--;
+            result = await this.updateText({ start: range.start + start, length: end - start, value: "" });
+        }
+        return result;
+    },
     remove() {
         return this.updateText({ start: 0, length: this.length, value: "" });
     }
 });
 
 Object.assign(elementEditorPrototype, {
+    /** Remove the complete element source range through the editor update API. */
+    remove() {
+        const range = this.getOuterRange();
+        if (!range) return editorPrototype.remove.call(this);
+        return submitUpdate(this, {
+            start: range.start,
+            length: range.end - range.start,
+            value: ""
+        });
+    },
+    /** Change an element's tag while preserving its attributes and child source. */
+    async setTagName(name) {
+        if (typeof name !== "string" || !/^[A-Za-z][A-Za-z0-9._:-]*$/.test(name))
+            throw new TypeError("A valid HTML tag name is required.");
+        const previous = String(this.tag || "");
+        if (!previous) throw new Error("Element detail has no tag name.");
+        const next = name.toLowerCase();
+        if (next === previous.toLowerCase()) return;
+        const wasVoid = isVoidElement(previous.toLowerCase());
+        const isVoid = isVoidElement(next);
+        if (wasVoid !== isVoid)
+            throw new TypeError("Tag changes must keep void and non-void elements in the same category.");
+
+        const start = this.getStart();
+        const endTag = collectionsByEditor.get(this)?.find(detail =>
+            detail.kind === "elementEnd" && detail.parentNode === this &&
+            detail.tag?.toLowerCase() === previous.toLowerCase());
+        if (!wasVoid && !endTag)
+            throw new Error("Cannot change a non-void element without a matching end tag.");
+
+        const root = this.element?.editor || this.element;
+        if (typeof root?.updateText !== "function")
+            throw new Error("The editor element does not expose editor.updateText().");
+        const openingStart = this.value[0] === "<" &&
+            this.value.slice(1, previous.length + 1).toLowerCase() === previous.toLowerCase() ? 1 : -1;
+        if (openingStart < 0) throw new Error("Could not locate the opening tag name in its source detail.");
+        const closingStart = endTag?.getStart();
+        const result = await root.updateText({ start: start + openingStart,
+            length: previous.length, value: next });
+        if (!endTag) return result;
+        return root.updateText({ start: closingStart + (next.length - previous.length) + 2,
+            length: previous.length, value: next });
+    },
     /** Find a detail-local insertion point at one of this element's boundaries. */
     getInsertionPoint(position) {
         const collection = collectionsByEditor.get(this);
@@ -152,6 +299,12 @@ Object.assign(elementEditorPrototype, {
     /** Return the matching attribute editor, or null when the attribute is absent. */
     getAttribute(name) {
         return attributeEditor(this, name);
+    },
+    /** Return this element's source-backed attribute details in source order. */
+    getAttributes() {
+        const collection = collectionsByEditor.get(this);
+        if (!collection) throw new Error("Editor is not attached to an ordered editor collection.");
+        return collection.filter(item => item.kind === "attribute" && item.parentNode === this);
     },
     setAttribute(name, value) {
         if (value == null) return this.removeAttribute(name);
