@@ -63,6 +63,20 @@ test('repeated native deletion follows the caret', () => withInput(async page =>
     ]);
 }, 'aaaaa'));
 
+for (const [label, key, source, caret, start, length] of [
+    ['forward deletion', 'Delete', 'aaaaa', 2, 2, 1],
+    ['backward emoji deletion', 'Backspace', '🙂🙂🙂', 4, 2, 2],
+    ['forward emoji deletion', 'Delete', '🙂🙂🙂', 2, 2, 2]
+]) {
+    test(`${label} reports the exact UTF-16 range in repeated text`, () => withInput(async page => {
+        await page.evaluate(caret => input.setSelectionRange(caret, caret), caret);
+        await page.keyboard.press(key);
+        assert.deepEqual(await page.evaluate(() => changes()), [{
+            start, length, value: '', string: source.slice(0, start) + source.slice(start + length)
+        }]);
+    }, source));
+}
+
 test('setValue refreshes the comparison baseline without emitting a local edit', () => withInput(async page => {
     await page.evaluate(() => {
         input.value = 'remote';

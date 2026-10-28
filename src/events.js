@@ -48,6 +48,13 @@ export function bindEditorInput(element, { onUpdate, onSelection, readValue, map
         if (composing) return;
         const next = String(read(event, sourceSelection) ?? "");
         if (next === previous) return;
+        const deletedLength = previous.length - next.length;
+        if (deletedLength > 0 && sourceSelection && sourceSelection.start === sourceSelection.end) {
+            if (event.inputType?.endsWith("Backward") && sourceSelection.start >= deletedLength)
+                sourceSelection = { start: sourceSelection.start - deletedLength, end: sourceSelection.end };
+            else if (event.inputType?.endsWith("Forward") && sourceSelection.end + deletedLength <= previous.length)
+                sourceSelection = { start: sourceSelection.start, end: sourceSelection.end + deletedLength };
+        }
         const change = textChange(previous, next, sourceSelection);
         previous = next;
         selectionBeforeInput = null;

@@ -60,6 +60,13 @@ function renderRoot(root, details, property, plan, documentRootDetail = null) {
             }
             detail.renderValue = value;
         }
+        let position = 0;
+        for (const detail of details) {
+            position += detail.length;
+            const placeholder = previous.placeholders.get(detail);
+            if (placeholder && placeholder.getAttribute(breakPlaceholder) !== String(position))
+                placeholder.setAttribute(breakPlaceholder, String(position));
+        }
         return operations;
     }
     const host = childContainer(root);
@@ -68,6 +75,7 @@ function renderRoot(root, details, property, plan, documentRootDetail = null) {
     const nodes = new Set();
     const addedNodes = new Set();
     const starts = new Map();
+    const placeholders = new Map();
     const append = (parent, node) => {
         if (!children.has(parent)) children.set(parent, []);
         children.get(parent).push(node);
@@ -142,6 +150,7 @@ function renderRoot(root, details, property, plan, documentRootDetail = null) {
         if (!node || ordered?.at(-1) !== node) continue;
         const placeholder = document.createElement("br");
         placeholder.setAttribute(breakPlaceholder, String(starts.get(detail) + detail.length));
+        placeholders.set(detail, placeholder);
         append(parent, placeholder);
         operations.added.push(placeholder);
         addedNodes.add(placeholder);
@@ -157,6 +166,7 @@ function renderRoot(root, details, property, plan, documentRootDetail = null) {
     if (lastElement?.[property] && rootChildren?.at(-1) === lastElement[property]) {
         const placeholder = document.createElement("br");
         placeholder.setAttribute(breakPlaceholder, String(sourcePosition));
+        placeholders.set(lastDetail, placeholder);
         append(host, placeholder);
         operations.added.push(placeholder);
         addedNodes.add(placeholder);
@@ -195,7 +205,7 @@ function renderRoot(root, details, property, plan, documentRootDetail = null) {
             before = node;
         }
     }
-    states.set(root, { nodes, attributes });
+    states.set(root, { nodes, attributes, placeholders });
     return operations;
 }
 

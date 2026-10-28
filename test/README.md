@@ -35,12 +35,14 @@ editor objects. Source offsets are calculated with `getStart()` from preceding
 segment lengths. Assertions about the removed absolute-position ledger and old
 `updates.js`/node-data APIs have been replaced with checks of these contracts.
 
-Behavior failures remain ordinary failing tests. They are not skipped or marked
-as expected failures: parser parity, repeated-text deletion offsets, caret
-placement, and mode-change editing still need implementation investigation.
+Behavior regressions remain ordinary tests. Parser parity includes 7,500
+deterministic edits plus individual cases for comments, quotes, ancestor closing
+tags, and raw-text elements. Browser regressions cover exact deletion ranges,
+caret placement, and editing after mode changes while retaining external update
+handlers.
 
-The module-lifecycle checkpoint completes with 132 passing tests and these five
-failing regressions:
+The module-lifecycle checkpoint `8bf35c4` recorded 132 passing tests and these five
+regressions, which remain covered by the active suite:
 
 - Incremental DOM parsing differs from a complete parse after malformed edits.
 - Typing a completed div through an existing update callback misplaces the caret.

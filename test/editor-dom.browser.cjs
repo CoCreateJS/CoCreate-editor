@@ -591,3 +591,17 @@ test('the caret placeholder tracks the source end after a text update', async ()
         }), true);
     });
 });
+
+test('text edits shift later newline and root caret placeholders in both projections', async () => {
+    await fixture('<main><p>first</p><p>last\n</p></main>', async page => {
+        const positions = await page.evaluate(async () => {
+            await apply({ start: sourceOf().indexOf('first'), length: 0, value: 'prefix ' });
+            const positions = root => [...root.querySelectorAll('[data-cocreate-dom-break]')]
+                .map(node => Number(node.getAttribute('data-cocreate-dom-break')));
+            const expected = [sourceOf().indexOf('\n') + 1, sourceOf().length];
+            return [positions(editor), positions(editor.editor.detachedNode), expected];
+        });
+        assert.deepEqual(positions[0], positions[2]);
+        assert.deepEqual(positions[1], positions[2]);
+    });
+});

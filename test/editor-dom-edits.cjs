@@ -184,6 +184,74 @@ test('lexical changes that alter later ownership include the necessary enclosing
     }
 });
 
+test('introducing an unfinished comment invalidates the later closing tags it absorbs', () => {
+    const source = '<b>alpha</b><i>tail</i>';
+    const details = parseDOM(source);
+    apply(details, source.indexOf('alpha') + 1, 0, '<!--');
+    assert.equal(details.some(detail => detail.kind === 'element'), false);
+    assert.equal(details.find(detail => detail.kind === 'comment').complete, false);
+});
+
+test('opening a quoted unfinished tag can absorb a following comment', () => {
+    const source = "<b>x'<!-- note -->";
+    const details = parseDOM(source);
+    apply(details, source.indexOf('>'), 1, ' ');
+    assert.equal(details.length, 1);
+    assert.equal(details[0].kind, 'text');
+});
+
+test('an inserted ancestor close ends the represented element at its new source position', () => {
+    const source = '<b>alpha</b><i>tail</i>';
+    const details = parseDOM(source);
+    const tail = details.find(detail => detail.value === 'tail');
+    const start = source.indexOf('alpha') + 2;
+    apply(details, start, 0, '</b>');
+    const bold = details.find(detail => detail.kind === 'element' && detail.tag === 'b');
+    assert.equal(bold.getOuterRange().end, start + '</b>'.length);
+    assert.ok(details.includes(tail));
+});
+
+test('a closing tag inside an element accounts for unmatched openings in preceding text', () => {
+    const source = '<b>raw<p>inside</p>';
+    const details = parseDOM(source);
+    apply(details, source.indexOf('inside') + 2, 0, '</b>');
+    assert.ok(details.every(detail => detail.kind === 'text'));
+});
+
+test('changing an unmatched raw-text opener reveals following complete elements', () => {
+    const source = '<textarea>unfinished<i>after</i>';
+    const details = parseDOM(source);
+    apply(details, 1, 'textarea'.length, 'div');
+    assert.ok(details.some(detail => detail.kind === 'element' && detail.tag === 'i'));
+});
+
+test('repairing a raw-text closing name inside comment-like text ends that element', () => {
+    const source = '<script><!-- </scrpt> body</script><p>tail</p>';
+    const details = parseDOM(source);
+    apply(details, source.indexOf('scrpt') + 3, 0, 'i');
+    const closing = details.find(detail => detail.kind === 'elementEnd' && detail.tag === 'script');
+    assert.equal(closing.getStart(), sourceOf(details).indexOf('</script>'));
+    assert.ok(details.some(detail => detail.kind === 'text' && detail.value === ' body</script>'));
+});
+
+test('introducing a raw-text opener in tag syntax changes later lexical ownership', () => {
+    const source = '<div>A</div><input disabled><p>C</p>';
+    const details = parseDOM(source);
+    apply(details, source.indexOf('>'), 1, '<script>');
+    assert.equal(details.some(detail => detail.kind === 'element' && detail.tag === 'p'), false);
+    assert.ok(details.some(detail => detail.kind === 'element' && detail.tag === 'input'));
+});
+
+test('renaming a represented element to raw text reparses later siblings and can be repaired', () => {
+    const source = '<div>A</div><p>C</p>';
+    const details = parseDOM(source);
+    apply(details, 1, 'div'.length, 'script');
+    assert.equal(details.some(detail => detail.kind === 'element' && detail.tag === 'p'), false);
+    apply(details, sourceOf(details).indexOf('</div>') + 2, 'div'.length, 'script');
+    assert.ok(details.some(detail => detail.kind === 'element' && detail.tag === 'script'));
+    assert.ok(details.some(detail => detail.kind === 'element' && detail.tag === 'p'));
+});
+
 test('void element insertions and deletions do not consume following sibling objects', () => {
     const details = parseDOM('<main><p>before</p><p>after</p></main>');
     const tail = details.find(detail => detail.value === 'after');

@@ -49,6 +49,8 @@ export function createEditorCore({ updateText, eventTarget = globalThis.window }
         current?.input?.disconnect?.();
         const source = String(options.source ?? readSource(element, mode));
         current?.module?.destroyEditor?.(element);
+        if (current?.localUpdateText && element.editor?.updateText === current.localUpdateText)
+            delete element.editor.updateText;
         if (mode === "text") deleteStoredEditorDetails(element);
         const modulePromise = loadEditor(mode);
         const detailsPromise = mode === "dom" ? parseAndStoreEditorDetails(element, source)

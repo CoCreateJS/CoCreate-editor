@@ -2,6 +2,8 @@ import parseDOM, { isVoidElement } from "../parsers/dom.js";
 import { getPotentialDOMTagFlags, matchCompleteDOMElements } from "../parsers/matchDOMTag.js";
 import { detailsToSource, planDetailsEdit } from "./lengthEditorDetails.js";
 
+const rawTextElements = new Set(["script", "style", "textarea", "title"]);
+
 const signature = detail => JSON.stringify([detail.kind, detail.nodeType, detail.tag, detail.name,
     !!detail.sourceOnly, detail.complete, detail.selfClosing]);
 
@@ -103,15 +105,28 @@ function planTextEdit(details, start, end, value) {
         const localStart = start - position;
         const localEnd = end - position;
         const nextValue = detail.value.slice(0, localStart) + value + detail.value.slice(localEnd);
-        // Keep incomplete markup as text. Only a complete element, or a void
-        // element, promotes that text into DOM details and triggers a reparse.
+        const rawTextTag = rawTextElements.has(detail.parentNode?.tag) ? detail.parentNode.tag : null;
+        if (!rawTextTag && /<[!?]/.test(nextValue)) return null;
+        if (rawTextTag && new RegExp(`</${rawTextTag}(?=[\\t\\n\\f\\r />])`, "i").test(nextValue))
+            return null;
         const removed = detail.value.slice(localStart, localEnd);
+        // Changing a tag delimiter or quote can absorb later source records,
+        // even when the opening tag itself is still incomplete.
+        if (/[<>"']/.test(value + removed) && (detail.value.includes("<") || nextValue.includes("<")))
+            return null;
+        const flags = getPotentialDOMTagFlags(nextValue);
+        if (flags.potentialTags.some(tag => tag.kind === "opening" && tag.complete && rawTextElements.has(tag.tag)))
+            return null;
+        for (let parent = detail.parentNode; parent; parent = parent.parentNode)
+            if (flags.potentialTags.some(tag => tag.kind === "closing" && tag.complete && tag.tag === parent.tag))
+                return null;
+        // Editing one token can reveal complete elements elsewhere in the run.
         if (needsTagMatch(value, removed, detail) &&
-            matchCompleteDOMElements(nextValue, localStart, localStart + value.length).length) return null;
+            matchCompleteDOMElements(nextValue, 0, nextValue.length).length) return null;
         const retained = details.filter(item => item !== detail);
         return { affected: [detail], retained, added: [], reparse: null,
             edited: nextValue ? [{ detail, value: nextValue, changes: {
-                value: nextValue, length: nextValue.length, ...getPotentialDOMTagFlags(nextValue)
+                value: nextValue, length: nextValue.length, ...flags
             } }] : [],
             removed: nextValue ? [] : [{ detail, start: position, end: next }],
             nextDetails: nextValue ? [...details] : retained };
@@ -171,7 +186,21 @@ export function planDOMEdit(details, start, end, value, { parse = parseDOM, edit
     let right = Math.min(units.length - 1, Math.max(first, last) + 1);
     const firstDetail = affected[0] || ranges.find(range => range.start <= start && start < range.end)?.detail;
     const lastDetail = affected.at(-1) || firstDetail;
-    let container = resolveText ? null : sharedContainer(firstDetail, lastDetail);
+    // Tag matching can promote or invalidate openings in earlier text records,
+    // outside the nearest represented element. Include that lexical context.
+    const touched = new Set(affected);
+    const changesRawText = getPotentialDOMTagFlags(value + removedSource).potentialTags
+        .some(tag => rawTextElements.has(tag.tag)) || ranges.some(({ detail, start: position }) => {
+            if (!touched.has(detail)) return false;
+            if (rawTextElements.has(detail.tag) || rawTextElements.has(detail.parentNode?.tag)) return true;
+            if (detail.kind !== "element") return false;
+            const name = /^<([A-Za-z][\w:-]*)/.exec(source.slice(Math.min(start, position)))?.[1];
+            return rawTextElements.has(name?.toLowerCase());
+        });
+    const unresolvedTags = changedText && details.some(detail => detail.kind === "text" &&
+        !detail.sourceOnly && !rawTextElements.has(detail.parentNode?.tag) && detail.potentialTags?.length);
+    const reparseAll = resolveText || unresolvedTags || changesRawText;
+    let container = reparseAll ? null : sharedContainer(firstDetail, lastDetail);
     let parseStart, parseEnd, fromIndex, toIndex, externalParent, parsed, parseSource;
     const fragment = () => previousSource.slice(parseStart, start) + value + previousSource.slice(end, parseEnd);
     while (container) {
@@ -192,10 +221,10 @@ export function planDOMEdit(details, start, end, value, { parse = parseDOM, edit
         container = container.parentNode;
     }
     if (!container) {
-        parseStart = resolveText ? 0 : units[left]?.start ?? 0;
-        parseEnd = resolveText ? previousSource.length : units[right]?.end ?? previousSource.length;
-        fromIndex = resolveText ? 0 : units[left]?.startIndex ?? 0;
-        toIndex = resolveText ? details.length : units[right]?.endIndex ?? details.length;
+        parseStart = reparseAll ? 0 : units[left]?.start ?? 0;
+        parseEnd = reparseAll ? previousSource.length : units[right]?.end ?? previousSource.length;
+        fromIndex = reparseAll ? 0 : units[left]?.startIndex ?? 0;
+        toIndex = reparseAll ? details.length : units[right]?.endIndex ?? details.length;
         externalParent = null;
         parseSource = fragment();
         parsed = parse(parseSource, editor);

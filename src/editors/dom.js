@@ -42,14 +42,10 @@ export function updateDOMEditorDetails(details, update, { editor = details[0]?.e
                 position += detail.length;
                 return matches;
             });
-            if (target?.liveNode) {
-                if (completed.contentStart === completed.contentEnd)
-                    setDOMSelectionOverride(editor, target.liveNode, completed.contentStart, 0);
-                else if (target.liveNode.parentNode) {
-                    const parent = target.liveNode.parentNode;
-                    const index = [...parent.childNodes].indexOf(target.liveNode);
-                    setDOMSelectionOverride(editor, parent, completed.end, index + 1);
-                }
+            if (target?.liveNode?.parentNode) {
+                const parent = target.liveNode.parentNode;
+                const index = [...parent.childNodes].indexOf(target.liveNode);
+                setDOMSelectionOverride(editor, parent, completed.end, index + 1);
             }
         }
     }

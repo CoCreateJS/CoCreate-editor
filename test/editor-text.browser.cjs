@@ -156,6 +156,23 @@ test('switching from DOM to text clears the stored details and keeps direct edit
     });
 });
 
+test('mode changes preserve externally supplied update handlers', async () => {
+    await fixture(async page => {
+        await page.evaluate(async () => {
+            window.externalUpdate = change => operations.push(change);
+            editor.editor.updateText = externalUpdate;
+            await core.initEditor(editor, { mode: 'dom', source: '<p>before</p>', force: true });
+            await core.initEditor(editor, { mode: 'text', source: 'after', force: true });
+            select(5);
+        });
+        await page.keyboard.type('!');
+        assert.deepEqual(await page.evaluate(() => [
+            editor.editor.updateText === externalUpdate,
+            operations.map(({ start, length, value }) => ({ start, length, value }))
+        ]), [true, [{ start: 5, length: 0, value: '!' }]]);
+    });
+});
+
 test('an empty text surface accepts incoming range updates and rejects mismatched source snapshots', async () => {
     await fixture(async page => {
         await page.evaluate(() => core.receiveUpdate({ elements: [editor], start: 0, end: 0, value: 'abc', string: 'abc' }));
