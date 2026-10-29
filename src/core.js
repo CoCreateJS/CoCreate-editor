@@ -17,6 +17,7 @@ let crdtPromise;
 const crdtMethods = ["getText", "replaceText", "updateText", "undoText", "redoText",
     "updateSelection", "getSelection", "getSelections", "endRun"];
 const crdtBindings = new WeakMap();
+const elementSetValueBindings = new WeakMap();
 
 function loadCRDT() {
     crdtPromise ||= import(/* webpackChunkName: "editor-crdt" */ "@cocreate/crdt")
@@ -29,16 +30,68 @@ function readSource(element) {
     if (typeof element.editor?.getSource === "function") return element.editor.getSource();
     if ((element.tagName === "INPUT" || element.tagName === "TEXTAREA") &&
         typeof element.value === "string") return element.value;
-    const attributeValue = element.getAttribute?.("value");
-    if (attributeValue !== null && attributeValue !== undefined) return attributeValue;
     if (typeof element.getValue === "function") {
         const value = element.getValue();
         if (value !== undefined && value !== null) return value;
     }
+    const attributeValue = element.getAttribute?.("value");
+    if (attributeValue !== null && attributeValue !== undefined) return attributeValue;
     if (typeof element.value === "string") return element.value;
     if (element.tagName === "IFRAME")
         return element.contentDocument?.documentElement?.outerHTML || "";
     return element.textContent || "";
+}
+
+function editorSource(value) {
+    if (typeof value === "string") return value;
+    if (value == null) return "";
+    if (typeof value === "object") return JSON.stringify(value, null, 2);
+    return String(value);
+}
+
+function bindElementSetValue(element) {
+    if (elementSetValueBindings.has(element) || typeof element.setValue !== "function") return;
+
+    const ownDescriptor = Object.getOwnPropertyDescriptor(element, "setValue");
+    const original = element.setValue;
+    const binding = { ownDescriptor, original, setValue: null, hasPending: false, pendingValue: undefined };
+    const setValue = function (value, dispatch) {
+        if (value == null || value === "$false") return original.call(this, value, dispatch);
+
+        const source = editorSource(value);
+        if (!this.editor?.initialized) {
+            original.call(this, source, dispatch);
+            const current = typeof this.getValue === "function" ? this.getValue() : this.value;
+            binding.pendingValue = editorSource(current ?? source);
+            binding.hasPending = true;
+            return;
+        }
+
+        const current = this.editor?.getSource?.();
+        const update = typeof current === "string" && current !== source &&
+            typeof this.editor?.updateText === "function"
+            ? this.editor.updateText({ start: 0, length: current.length, value: source })
+            : undefined;
+
+        if (update && typeof update.then === "function") {
+            return update.then(() => original.call(this, source, dispatch));
+        }
+        original.call(this, source, dispatch);
+        return update;
+    };
+
+    binding.setValue = setValue;
+    element.setValue = setValue;
+    elementSetValueBindings.set(element, binding);
+    return binding;
+}
+
+function unbindElementSetValue(element) {
+    const binding = elementSetValueBindings.get(element);
+    if (!binding || element.setValue !== binding.setValue) return;
+    if (binding.ownDescriptor) Object.defineProperty(element, "setValue", binding.ownDescriptor);
+    else delete element.setValue;
+    elementSetValueBindings.delete(element);
 }
 
 function crdtOptions(element) {
@@ -123,29 +176,61 @@ export function initElement(element, { force = false } = {}) {
     if (element.editor.loading) return element.editor.loading;
     if (element.editor.initialized && !force) return Promise.resolve(editorCore.getEditorDetails(element));
     element.editor.initialized = false;
+    const setterBinding = bindElementSetValue(element);
+    if (setterBinding) {
+        setterBinding.hasPending = false;
+        setterBinding.pendingValue = undefined;
+    }
+    if (element.tagName !== "INPUT" && element.tagName !== "TEXTAREA" &&
+        element.tagName !== "SELECT") element.value = editorSource(readSource(element));
     const loading = (async () => {
         const crdtEnabled = element.getAttribute("crdt") === "true";
         let source;
+        let hasCRDTValue = false;
         if (crdtEnabled) {
             const engine = await loadCRDT();
             attachCRDTAPI(element, engine);
-            const fallback = String(readSource(element) ?? "");
+            const fallback = setterBinding?.hasPending
+                ? setterBinding.pendingValue : editorSource(readSource(element));
             const data = crdtOptions(element);
             const localSeed = data.read === "false" && fallback
                 ? { ...data, read: "true", newObject: fallback }
                 : data;
             const response = await engine.getText({ ...localSeed, element });
+            hasCRDTValue = response !== undefined && response !== null;
             source = response ?? fallback;
-            source = String(source ?? "");
+            source = editorSource(source);
         } else {
             clearCRDTAPI(element);
-            source = String(readSource(element) ?? "");
+            source = setterBinding?.hasPending
+                ? setterBinding.pendingValue : editorSource(readSource(element));
         }
-        const details = await editorCore.initEditor(element, { force, source });
+        let details = await editorCore.initEditor(element, { force, source });
+        if (setterBinding?.hasPending && (!crdtEnabled || !hasCRDTValue)) {
+            const pendingSource = setterBinding.pendingValue;
+            const renderedSource = element.editor.getSource?.();
+            if (typeof renderedSource === "string" && renderedSource !== pendingSource &&
+                typeof element.editor.updateText === "function") {
+                await element.editor.updateText({ start: 0, length: renderedSource.length, value: pendingSource });
+            }
+            source = pendingSource;
+            details = editorCore.getEditorDetails(element) || details;
+        }
+        // Keep Element Prototype value reads aligned with the editor's source,
+        // including hosts whose native value property does not exist.
+        source = editorSource(source);
+        if (setterBinding) {
+            setterBinding.hasPending = false;
+            setterBinding.pendingValue = undefined;
+        }
         element.editor.initialized = true;
+        if (typeof element.setValue === "function") await element.setValue(source);
+        else if (element.tagName !== "INPUT" && element.tagName !== "TEXTAREA" &&
+            element.tagName !== "SELECT") element.value = source;
         emit(element, "editor-ready", { details, mode: element.getAttribute("editor") || "text" });
         return details;
     })().catch(error => {
+        element.editor.initialized = false;
         emit(element, "editor-error", { error });
         throw error;
     }).finally(() => {
@@ -202,6 +287,7 @@ const editor = {
     initElement,
     destroyEditor: element => {
         clearCRDTAPI(element);
+        unbindElementSetValue(element);
         return editorCore.destroyEditor(element);
     },
     ...editorAPI,
