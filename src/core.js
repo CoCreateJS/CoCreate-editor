@@ -11,7 +11,7 @@ import { getSelection, setSelection } from "./selection.js";
 import { textChange } from "./textChange.js";
 import observer from "@cocreate/observer";
 const editorCore = createEditorCore();
-const editorSelector = ":is([editor], [editor-language], [contenteditable], input[crdt='true'], textarea[crdt='true']):not([contenteditable='false']):not([editor-query])";
+const editorSelector = ":is([editor], [contenteditable], input[crdt='true'], textarea[crdt='true']):not([contenteditable='false']):not([editor-query])";
 let inputBindingPromise;
 let crdtPromise;
 const crdtMethods = ["getText", "replaceText", "updateText", "undoText", "redoText",
@@ -312,7 +312,7 @@ observer.init([
     {
         name: "CoCreateEditorAttributes",
         types: ["attributes"],
-        attributeFilter: ["editor", "editor-language", "contenteditable", "crdt",
+        attributeFilter: ["editor", "language", "contenteditable", "crdt",
             "realtime", "read", "save", "crud", "namespace", "room"],
         selector: editorSelector,
         callback: mutation => initElement(mutation.target, { force: true })

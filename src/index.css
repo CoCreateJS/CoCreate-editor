@@ -1,4 +1,23 @@
 /* Syntax colors for the source-backed token spans emitted by code.js. */
+[editor="code"] {
+	box-sizing: border-box;
+	width: 100%;
+	height: 100%;
+	min-width: 0;
+	overflow: visible;
+	white-space: pre;
+}
+
+[editor="code"] > pre {
+	box-sizing: border-box;
+	width: 100%;
+	height: 100%;
+	min-height: 100%;
+	margin: 0;
+	overflow: visible;
+	white-space: pre;
+}
+
 .token-comment { color: #687078; }
 .token-string, .token-attribute-value { color: #26733a; }
 .token-keyword, .token-literal, .token-entity, .token-doctype,

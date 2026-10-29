@@ -5,10 +5,13 @@
 
 import "./index.css";
 import * as lengthEditorDetails from "./editors/utilities/lengthEditorDetails.js";
+import observer from "@cocreate/observer";
+import { queryElements } from "@cocreate/utils";
 
-const editorSelector = ":is([editor], [editor-language], [contenteditable], input[crdt='true'], textarea[crdt='true']):not([contenteditable='false']):not([editor-query])";
+const editorSelector = ":is([editor], [contenteditable], input[crdt='true'], textarea[crdt='true']):not([contenteditable='false']):not([editor-query])";
 const bindingSelector = "[editor-query], [editor-attribute], [editor-property]";
 const activationSelector = `${editorSelector}, ${bindingSelector}`;
+const languageSelector = "code[language]";
 const parserLoaders = {
     dom: () => import(/* webpackChunkName: "editor-parser-dom" */ "./editors/parsers/dom.js"),
     markdown: () => import(/* webpackChunkName: "editor-parser-markdown" */ "./editors/parsers/markdown.js"),
@@ -19,6 +22,75 @@ let runtimePromise;
 let runtimeModule;
 let inputBindingPromise;
 const parserPromises = new Map();
+const languageStates = new WeakMap();
+
+function codeNodeFor(element) {
+    if (element.matches?.("code")) return element;
+    return null;
+}
+
+function isEditorTarget(element) {
+    return !!element.closest?.(editorSelector);
+}
+
+function clearLanguage(element) {
+    const code = codeNodeFor(element);
+    const state = code && languageStates.get(code);
+    if (!code || !state) return;
+    languageStates.delete(code);
+    code.replaceChildren(code.ownerDocument.createTextNode(code.textContent || ""));
+}
+
+function languageError(element, error) {
+    const EventConstructor = element.ownerDocument?.defaultView?.CustomEvent || globalThis.CustomEvent;
+    if (EventConstructor) element.dispatchEvent(new EventConstructor("language-error", {
+        bubbles: true, detail: { error }
+    }));
+}
+
+async function formatLanguage(element) {
+    if (isEditorTarget(element)) return;
+    const language = element.getAttribute("language")?.trim();
+    const code = codeNodeFor(element);
+    if (!language || !code) return;
+
+    const source = code.textContent || "";
+    const previous = languageStates.get(code);
+    if (previous?.language === language && previous.source === source) return previous.promise;
+
+    const state = { language, source, promise: null };
+    languageStates.set(code, state);
+    state.promise = (async () => {
+        const parser = await loadParser("code");
+        const details = await parser.parseCode(source, language);
+        if (languageStates.get(code) !== state ||
+            element.getAttribute("language") !== language || code.textContent !== source) return;
+
+        const fragment = code.ownerDocument.createDocumentFragment();
+        for (const detail of details) {
+            if (detail.token) {
+                const span = code.ownerDocument.createElement("span");
+                span.className = `token-${detail.token}`;
+                span.textContent = detail.value;
+                fragment.append(span);
+            } else fragment.append(code.ownerDocument.createTextNode(detail.value));
+        }
+        code.replaceChildren(fragment);
+    })().catch(error => {
+        if (languageStates.get(code) === state) languageStates.delete(code);
+        languageError(element, error);
+    });
+    return state.promise;
+}
+
+export async function initLanguage(root = globalThis.document) {
+    if (!root) return [];
+    const elements = new Set();
+    if (root.matches?.(languageSelector) && !isEditorTarget(root)) elements.add(root);
+    for (const element of queryElements({ element: root, selector: languageSelector }))
+        if (!isEditorTarget(element)) elements.add(element);
+    return Promise.all([...elements].map(formatLanguage));
+}
 
 function loadRuntime() {
     runtimePromise ||= import(/* webpackChunkName: "editor-runtime" */ "./core.js")
@@ -62,6 +134,7 @@ export async function init(root = globalThis.document) {
     const editors = await callRuntime("init", [root]);
     if (root?.matches?.(bindingSelector) || root?.querySelector?.(bindingSelector))
         await (await loadInputBinding()).init(root);
+    await initLanguage(root);
     return editors;
 }
 export const initElements = (...args) => callRuntime("initElements", args);
@@ -127,7 +200,7 @@ function observeDocument() {
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ["editor", "editor-language", "contenteditable", "editor-query",
+        attributeFilter: ["editor", "contenteditable", "editor-query",
             "editor-attribute", "editor-property", "crdt"]
     });
 }
@@ -139,7 +212,7 @@ if (typeof document !== "undefined") {
 }
 
 const editor = {
-    init, initElements, initElement, createEditorCore, createCore, createEditorEvents,
+    init, initElements, initElement, initLanguage, createEditorCore, createCore, createEditorEvents,
     bindEditorInput, getSelection, setSelection, textChange,
     initEditorInput, uninitEditorInput, initEditorQuery, uninitEditorQuery, destroyEditor,
     sendPosition, updateText, updateElement, loadEditor, loadParser, parseDOM,
@@ -148,5 +221,28 @@ const editor = {
     parseAndStoreMarkdownDetails, parseAndStoreCodeDetails, updateStoredEditorDetails,
     getStoredEditorDetails, deleteStoredEditorDetails, lengthEditorDetails
 };
+
+observer.init([
+    {
+        name: "CoCreateLanguageAddedNodes",
+        types: ["addedNodes", "childList", "characterData"],
+        selector: languageSelector,
+        callback: mutation => { void initLanguage(mutation.target); }
+    },
+    {
+        name: "CoCreateLanguageAttribute",
+        types: ["attributes"],
+        attributeFilter: ["language"],
+        selector: "code",
+        callback: mutation => {
+            if (mutation.target.hasAttribute("language"))
+                void initLanguage(mutation.target);
+            else clearLanguage(mutation.target);
+        }
+    }
+]);
+
+if (typeof document !== "undefined")
+    void initLanguage(document).catch(error => console.error("CoCreate language formatting failed", error));
 
 export default editor;

@@ -548,7 +548,7 @@
                 editor.setAttribute('crdt', 'false');
                 if (editor.tagName === 'DIV') editor.setAttribute('contenteditable', 'true');
                 if (editor.tagName !== 'INPUT') editor.setAttribute('spellcheck', 'false');
-                if (type === 'code') editor.setAttribute('editor-language', activeLanguage);
+                if (type === 'code') editor.setAttribute('language', activeLanguage);
                 if (editor.tagName === 'DIV') editor.textContent = source;
                 else editor.value = source;
                 if (editor.tagName === 'INPUT') editor.type = 'text';

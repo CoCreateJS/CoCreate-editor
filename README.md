@@ -45,7 +45,7 @@ finds one, then loads the selected mode and its dependencies on demand.
 
 <div editor="markdown" contenteditable="true"># Welcome</div>
 
-<div editor="code" editor-language="javascript" contenteditable="true">
+<div editor="code" language="javascript" contenteditable="true">
 const value = 1;
 </div>
 
@@ -93,6 +93,20 @@ const codeRecords = await CoCreate.editor.parseCode('const value = 1;', 'javascr
 Each record describes a source segment with fields such as `kind`, `value`,
 and `length`. DOM records also describe element relationships and attributes;
 Markdown and code records carry their syntax and token information.
+
+For read-only syntax highlighting, add `language` to a `<code>` element.
+This runs the selected language parser and renders token spans without
+initializing an editable editor:
+
+```html
+<pre><code language="json">{"enabled": true}</code></pre>
+```
+
+The code parser and the selected language tokenizer load lazily. The attribute
+is observed on initial markup, dynamically added code, source text changes, and
+language changes. Removing the attribute restores plain code text. On an
+editable code editor, `editor="code"` selects the editor and `language`
+selects its tokenizer. Without `language`, the code editor stays plain text.
 
 To create editor objects explicitly, use the corresponding creation API:
 

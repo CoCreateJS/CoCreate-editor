@@ -17,7 +17,6 @@ function modeFor(element, requested) {
     if (requested) return requested;
     const type = element.getAttribute?.("editor")?.trim().toLowerCase();
     if (["dom", "markdown", "code"].includes(type)) return type;
-    if (element.hasAttribute?.("editor-language")) return "code";
     return "text";
 }
 
@@ -41,8 +40,7 @@ export function createEditorCore({ updateText, eventTarget = globalThis.window }
         if (!element || (typeof element !== "object" && typeof element !== "function"))
             throw new TypeError("An editor element is required.");
         const mode = modeFor(element, options.mode);
-        const language = options.language ?? element.getAttribute?.("editor-language") ??
-            (mode === "code" ? "auto" : "text");
+        const language = options.language ?? element.getAttribute?.("language") ?? "text";
         const current = activeEditors.get(element);
         if (current && !options.force && current.mode === mode && current.language === language)
             return current.ready;
@@ -189,7 +187,7 @@ export function createEditorCore({ updateText, eventTarget = globalThis.window }
 
     async function init(root = globalThis.document) {
         if (!root?.querySelectorAll) return [];
-        const selector = ":is([editor], [editor-language], [contenteditable], input[crdt='true'], textarea[crdt='true']):not([contenteditable='false']):not([editor-query])";
+        const selector = ":is([editor], [contenteditable], input[crdt='true'], textarea[crdt='true']):not([contenteditable='false']):not([editor-query])";
         const elements = [...root.querySelectorAll(selector)].filter(element => {
             if (element.tagName !== "INPUT") return true;
             return ["", "text", "search", "tel", "url", "email"]

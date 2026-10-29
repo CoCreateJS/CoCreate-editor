@@ -38,7 +38,7 @@ async function fixture(run, source = '<p>abc</p>') {
             window.core = createEditorCore({ eventTarget: window });
             window.editor = document.createElement('div');
             editor.setAttribute('editor', 'code');
-            editor.setAttribute('editor-language', 'html');
+            editor.setAttribute('language', 'html');
             editor.contentEditable = 'true';
             document.body.append(editor);
             await core.initEditor(editor, { mode: 'code', language: 'html', source });
