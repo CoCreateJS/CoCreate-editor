@@ -24,6 +24,88 @@
   "publishConfig": {
     "access": "public"
   },
+  "cocreate": {
+    "environment": [
+      "client"
+    ],
+    "interface": {
+      "schemaVersion": 1,
+      "summary": "Extensible collaborative editor for text, HTML/DOM, Markdown, and code with syntax highlighting and optional CRDT sync.",
+      "source": "src/index.js",
+      "declarative": {
+        "selectors": [
+          "code",
+          ":is([editor], [contenteditable], input[crdt='true'], textarea[crdt='true']):not([contenteditable='false']):not([editor-query])",
+          "[editor-query], [editor-attribute], [editor-property]",
+          "${editorSelector}, ${bindingSelector}",
+          "code[language]"
+        ],
+        "attributes": [
+          {
+            "name": "contenteditable"
+          },
+          {
+            "name": "crdt"
+          },
+          {
+            "name": "editor"
+          },
+          {
+            "name": "editor-attribute"
+          },
+          {
+            "name": "editor-property"
+          },
+          {
+            "name": "editor-query"
+          },
+          {
+            "name": "language"
+          }
+        ]
+      },
+      "api": {
+        "exports": [
+          "autoLanguageDetection",
+          "bindEditorInput",
+          "createCodeEditor",
+          "createCore",
+          "createDOMEditor",
+          "createEditorCore",
+          "createEditorEvents",
+          "createMarkdownEditor",
+          "createTextEditor",
+          "deleteStoredEditorDetails",
+          "destroyEditor",
+          "getSelection",
+          "getStoredEditorDetails",
+          "init",
+          "initEditorInput",
+          "initEditorQuery",
+          "initElement",
+          "initElements",
+          "initLanguage",
+          "lengthEditorDetails",
+          "loadEditor",
+          "loadParser",
+          "parseAndStoreCodeDetails",
+          "parseAndStoreEditorDetails",
+          "parseAndStoreMarkdownDetails",
+          "parseCode",
+          "parseDOM",
+          "parseMarkdown",
+          "sendPosition",
+          "setSelection",
+          "textChange",
+          "uninitEditorInput",
+          "uninitEditorQuery",
+          "updateElement",
+          "updateStoredEditorDetails",
+          "updateText"
+        ]
+      }
+    }
+  },
   "scripts": {
     "start": "webpack --config webpack.config.js",
     "build": "webpack --mode=production --config webpack.config.js",
