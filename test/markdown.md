@@ -86,7 +86,7 @@ const result = await crud.send({
     filter: {
         query: { status: "active" },
         limit: 25,
-        sort: { "modified.on": -1 }
+        sort: { "updated.on": -1 }
     }
 });
 ```
