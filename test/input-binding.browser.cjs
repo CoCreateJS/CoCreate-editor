@@ -33,7 +33,7 @@ before(async () => {
                 .replace('./events.js', '/stubs/events.js')
                 .replace('./selection.js', '/stubs/selection.js')
                 .replace('"@cocreate/observer"', '"/stubs/observer.js"')
-                .replace('"@cocreate/utils/browser"', '"/stubs/queryElements.js"');
+                .replace('"@cocreate/utils/queryElements"', '"/stubs/queryElements.js"');
         }
         response.end(source);
     });

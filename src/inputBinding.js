@@ -98,7 +98,8 @@ function reportControlUpdate(input, update) {
 
 async function findTarget(context, selector) {
     if (!selector) return null;
-    queryElementsPromise ||= import("@cocreate/utils/browser").then(module => module.queryElements)
+    queryElementsPromise ||= import("@cocreate/utils/queryElements")
+        .then(module => module.queryElements)
         .catch(error => { queryElementsPromise = undefined; throw error; });
     const queryElements = await queryElementsPromise;
     return queryElements({ element: context, selector })?.[0] || null;
