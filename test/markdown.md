@@ -1,14 +1,14 @@
 # CoCreateJS
 
 [![npm](https://img.shields.io/npm/v/@cocreate/cocreatejs?style=flat-square)](https://www.npmjs.com/package/@cocreate/cocreatejs)
-[![GitHub release](https://img.shields.io/github/v/release/CoCreate-app/CoCreateJS?style=flat-square)](https://github.com/CoCreate-app/CoCreateJS/releases)
+[![GitHub release](https://img.shields.io/github/v/release/CoCreate-app/CoCreateJS?style=flat-square)](https://github.com/CoCreateJS/CoCreateJS/releases)
 [![License](https://img.shields.io/github/license/CoCreate-app/CoCreateJS?style=flat-square)](./LICENSE)
 
 An open-source, modular JavaScript runtime for building realtime, offline-first, data-driven applications with declarative HTML, headless JavaScript, or both.
 
 CoCreateJS gives standard HTML a direct connection to data, actions, APIs, sockets, storage, components, and third-party plugins. Start with a few attributes, use the same capabilities programmatically, or combine them with the framework and architecture you already have.
 
-This repository contains `@cocreate/cocreatejs`, the optional browser-side runtime. It works especially well with [CoCreateWS](https://github.com/CoCreate-app/CoCreateWS), the scalable server runtime behind the wider CoCreate ecosystem, but neither side locks you into the other.
+This repository contains `@cocreate/cocreatejs`, the optional browser-side runtime. It works especially well with [CoCreateWS](https://github.com/CoCreateJS/CoCreateWS), the scalable server runtime behind the wider CoCreate ecosystem, but neither side locks you into the other.
 
 ![CoCreateJS](./CoCreateJS.png)
 
@@ -205,7 +205,7 @@ The server does not require the CoCreateJS client, and the client does not requi
 
 ## Scale with CoCreateWS
 
-[CoCreateWS](https://github.com/CoCreate-app/CoCreateWS) is the server-side runtime for applications that need the full CoCreate infrastructure model. It brings the client's data, socket, API, file, authentication, and authorization conventions into a modular server environment.
+[CoCreateWS](https://github.com/CoCreateJS/CoCreateWS) is the server-side runtime for applications that need the full CoCreate infrastructure model. It brings the client's data, socket, API, file, authentication, and authorization conventions into a modular server environment.
 
 An application can begin with a single deployment and grow into distributed infrastructure without changing how the client describes its data or messages. CoCreateWS is designed for:
 
@@ -251,7 +251,7 @@ You can also load a built bundle directly:
 Clone the repository and install its dependencies:
 
 ```sh
-git clone https://github.com/CoCreate-app/CoCreateJS.git
+git clone https://github.com/CoCreateJS/CoCreateJS.git
 cd CoCreateJS
 npm install
 ```
@@ -276,15 +276,15 @@ The generated browser bundle is written to `src/dist`.
 - [CoCreateJS documentation](https://cocreatejs.com/docs/)
 - [Repository documentation](./docs/)
 - [Demo source](./demo/)
-- [CoCreateWS](https://github.com/CoCreate-app/CoCreateWS)
+- [CoCreateWS](https://github.com/CoCreateJS/CoCreateWS)
 - [Changelog](./CHANGELOG.md)
-- [Releases](https://github.com/CoCreate-app/CoCreateJS/releases)
+- [Releases](https://github.com/CoCreateJS/CoCreateJS/releases)
 
 ## Contributing
 
 CoCreateJS is built as an ecosystem of small, composable packages. Contributions to the runtime, individual modules, documentation, and examples are welcome.
 
-Read the [contribution guide](./CONTRIBUTING.md), then open an [issue](https://github.com/CoCreate-app/CoCreateJS/issues) or [pull request](https://github.com/CoCreate-app/CoCreateJS/pulls).
+Read the [contribution guide](./CONTRIBUTING.md), then open an [issue](https://github.com/CoCreateJS/CoCreateJS/issues) or [pull request](https://github.com/CoCreateJS/CoCreateJS/pulls).
 
 ## License
 
